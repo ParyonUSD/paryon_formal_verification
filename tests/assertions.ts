@@ -1,0 +1,58 @@
+import { expect } from 'vitest';
+import type { SymbolicTx } from '../src/model.js';
+import { leakWitness, type LeakPolicy } from '../src/policy.js';
+import type { Z3, Z3Solver } from '../src/z3.js';
+
+/** Assert the base transaction is satisfiable (the model is not vacuously over-constrained). */
+export async function expectSat(s: Z3Solver): Promise<void> {
+  expect(await s.check()).toBe('sat');
+}
+
+/** Assert no privileged capability can leak: consensus + covenants + leak is UNSAT. */
+export async function expectNoLeak(z3: Z3, s: Z3Solver, tx: SymbolicTx, policy: LeakPolicy): Promise<void> {
+  s.add(leakWitness(z3, tx, policy));
+  expect(await s.check()).toBe('unsat');
+}
+
+/** Assert a leak IS reachable (used to show a missing-composition / missing-check artefact). */
+export async function expectLeak(z3: Z3, s: Z3Solver, tx: SymbolicTx, policy: LeakPolicy): Promise<void> {
+  s.add(leakWitness(z3, tx, policy));
+  expect(await s.check()).toBe('sat');
+}
+
+/**
+ * Assert an artifact-derived build is safe: at least one path is realisable
+ * (non-vacuous) and EVERY path is leak-free.
+ */
+export async function expectArtifactSafe(
+  z3: Z3,
+  built: { tx: SymbolicTx; policy: LeakPolicy; solvers: Z3Solver[] },
+): Promise<void> {
+  expect(built.solvers.length).toBeGreaterThan(0);
+
+  let anySat = false;
+  for (const s of built.solvers) {
+    if ((await s.check()) === 'sat') anySat = true;
+  }
+  expect(anySat).toBe(true); // non-vacuity
+
+  for (const s of built.solvers) {
+    s.push();
+    s.add(leakWitness(z3, built.tx, built.policy));
+    expect(await s.check()).toBe('unsat'); // leak-free on every path
+    s.pop();
+  }
+}
+
+/** Assert at least one path of an artifact-derived build CAN leak (composition-matters control). */
+export async function expectArtifactLeaks(
+  z3: Z3,
+  built: { tx: SymbolicTx; policy: LeakPolicy; solvers: Z3Solver[] },
+): Promise<void> {
+  let anyLeak = false;
+  for (const s of built.solvers) {
+    s.add(leakWitness(z3, built.tx, built.policy));
+    if ((await s.check()) === 'sat') anyLeak = true;
+  }
+  expect(anyLeak).toBe(true);
+}

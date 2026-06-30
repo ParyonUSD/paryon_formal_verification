@@ -1,0 +1,97 @@
+import type { Bool, Num, Z3 } from './z3.js';
+
+/**
+ * NFT capability, encoded as an integer so the consensus tally can do
+ * arithmetic over it. `NONE` (-1) means "no NFT on this UTXO".
+ *
+ * The on-chain introspection encoding concatenates the 1-byte capability onto
+ * the 32-byte category; we model the (category, capability) pair instead of the
+ * raw 32/33-byte string, which is the faithful and far cheaper representation.
+ */
+export const Capability = {
+  NONE: -1,
+  IMMUTABLE: 0,
+  MUTABLE: 1,
+  MINTING: 2,
+} as const;
+
+/** Category id 0 is reserved for "no token category" (pure BCH UTXO). */
+export const NO_CATEGORY = 0;
+
+/**
+ * Category and script ids are enums modelled as integers. Bounding them to a
+ * finite range is essential for performance: it turns the solver's search over
+ * free outputs from an unbounded-integer problem into a finite one. The bounds
+ * only need to cover every id the registry assigns; the attacker can still pick
+ * any value in range (including internal categories and the ATTACKER script), so
+ * bounding never hides a leak.
+ */
+export const MAX_CATEGORY = 31;
+export const MAX_SCRIPT = 63;
+
+/**
+ * Reserved locking-script ids. Real system covenant scripts get ids >= 2,
+ * assigned by the caller (e.g. one per ParyonUSD contract instance).
+ *
+ *  - ATTACKER: any script the attacker controls, i.e. NOT a system covenant
+ *    and NOT a burn. A privileged mutable/minting NFT reaching this script is
+ *    exactly the leak we are hunting.
+ *  - BURN: a provably-unspendable OP_RETURN nulldata output. Safe destination,
+ *    but it still consumes an NFT slot in the consensus tally.
+ */
+export const Script = {
+  ATTACKER: 0,
+  BURN: 1,
+  FIRST_COVENANT: 2,
+} as const;
+
+/** A single symbolic UTXO (transaction input or output). */
+export interface Utxo {
+  /** BCH amount in satoshis. */
+  value: Num;
+  /** Token category id (NO_CATEGORY when no token is present). */
+  category: Num;
+  /** Fungible token amount. */
+  fts: Num;
+  /** NFT capability (see {@link Capability}). */
+  capability: Num;
+  /** Locking-script id (see {@link Script}). */
+  script: Num;
+  /**
+   * NFT commitment, modelled as an integer. We only resolve it where a contract
+   * branches on a small constant (function-NFT identifiers like `commitment == 0x02`);
+   * everything else treats it opaquely (split/reconstruct contribute no constraint).
+   */
+  commitment: Num;
+  /** Whether this slot is actually used by the transaction. */
+  present: Bool;
+}
+
+/** A symbolic transaction: fixed-capacity input and output vectors. */
+export interface SymbolicTx {
+  inputs: Utxo[];
+  outputs: Utxo[];
+}
+
+function declareUtxo(z3: Z3, kind: 'in' | 'out', i: number): Utxo {
+  return {
+    value: z3.Int.const(`${kind}${i}.value`),
+    category: z3.Int.const(`${kind}${i}.category`),
+    fts: z3.Int.const(`${kind}${i}.fts`),
+    capability: z3.Int.const(`${kind}${i}.capability`),
+    script: z3.Int.const(`${kind}${i}.script`),
+    commitment: z3.Int.const(`${kind}${i}.commitment`),
+    present: z3.Bool.const(`${kind}${i}.present`),
+  };
+}
+
+/**
+ * Declare a fresh symbolic transaction with `nIn` input slots and `nOut` output
+ * slots. No constraints are added here; call {@link addConsensusRules} next.
+ */
+export function declareTx(z3: Z3, nIn: number, nOut: number): SymbolicTx {
+  return {
+    inputs: Array.from({ length: nIn }, (_, i) => declareUtxo(z3, 'in', i)),
+    outputs: Array.from({ length: nOut }, (_, i) => declareUtxo(z3, 'out', i)),
+  };
+}
