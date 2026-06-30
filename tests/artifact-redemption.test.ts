@@ -1,8 +1,8 @@
 import { paryonArtifacts } from '@paryonusd/contracts';
 import { beforeAll, describe, it } from 'vitest';
-import { Capability, NO_CATEGORY } from '../src/model.js';
+import { Capability } from '../src/model.js';
 import {
-  CAT, LoanFunction, POLICY, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
+  CAT, LOAN_CATEGORIES, LoanFunction, POLICY, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
 } from '../src/covenants/common.js';
 import { buildFromArtifact, type CovenantSpec } from '../src/script/fromArtifact.js';
 import { seedCategory, seedOpaque, seedScript } from '../src/script/interpreter.js';
@@ -41,7 +41,7 @@ describe('redemption system — partners derived from artifact bytecode', () => 
       });
     }
     return buildFromArtifact(z3, specs, {
-      nInputs: 7, nOutputs: 11, policy: POLICY.startRedemption, designatedInputs: [0, 1, 4],
+      nInputs: 7, nOutputs: 11, categories: LOAN_CATEGORIES, policy: POLICY.startRedemption, designatedInputs: [0, 1, 4],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE });
         loanInput(s, tx.inputs[1]!);
@@ -72,7 +72,7 @@ describe('redemption system — partners derived from artifact bytecode', () => 
       specs.push({ artifact: red.artifactRedemption, activeIndex: 3, abiIndex: 0, seeds: [seedCategory(CAT.PARYON)] });
     }
     return buildFromArtifact(z3, specs, {
-      nInputs: 7, nOutputs: 8, policy: POLICY.redeem, designatedInputs: [0, 3],
+      nInputs: 7, nOutputs: 8, categories: LOAN_CATEGORIES, policy: POLICY.redeem, designatedInputs: [0, 3],
       setup: (_z3, s, tx) => {
         loanInput(s, tx.inputs[0]!);
         loanSidecarInput(s, tx.inputs[1]!, CAT.LOANKEY);
@@ -103,7 +103,7 @@ describe('redemption system — partners derived from artifact bytecode', () => 
       specs.push({ artifact: red.artifactRedemption, activeIndex: 3, abiIndex: 1, seeds: [seedCategory(CAT.PARYON)] });
     }
     return buildFromArtifact(z3, specs, {
-      nInputs: 10, nOutputs: 11, policy: POLICY.swap, designatedInputs: [0, 3, 6],
+      nInputs: 10, nOutputs: 11, categories: LOAN_CATEGORIES, policy: POLICY.swap, designatedInputs: [0, 3, 6],
       setup: (_z3, s, tx) => {
         loanInput(s, tx.inputs[0]!);
         loanSidecarInput(s, tx.inputs[1]!, CAT.LOANKEY);

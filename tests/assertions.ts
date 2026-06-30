@@ -49,10 +49,10 @@ export async function expectArtifactLeaks(
   z3: Z3,
   built: { tx: SymbolicTx; policy: LeakPolicy; solvers: Z3Solver[] },
 ): Promise<void> {
-  let anyLeak = false;
+  // One leaking path is enough; stop on the first (no need to solve the remaining paths).
   for (const s of built.solvers) {
     s.add(leakWitness(z3, built.tx, built.policy));
-    if ((await s.check()) === 'sat') anyLeak = true;
+    if ((await s.check()) === 'sat') return;
   }
-  expect(anyLeak).toBe(true);
+  expect.fail('expected at least one path to leak, but none did');
 }

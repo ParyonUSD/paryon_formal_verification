@@ -2,7 +2,7 @@ import { paryonArtifacts } from '@paryonusd/contracts';
 import { beforeAll, describe, it } from 'vitest';
 import { Capability } from '../src/model.js';
 import {
-  CAT, LoanFunction, POLICY, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
+  CAT, LOAN_CATEGORIES, LoanFunction, POLICY, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
 } from '../src/covenants/common.js';
 import { buildFromArtifact } from '../src/script/fromArtifact.js';
 import { seedCategory, seedScript } from '../src/script/interpreter.js';
@@ -30,7 +30,7 @@ describe('loan functions — output pins from artifact bytecode', () => {
     await expectArtifactSafe(z3, buildFromArtifact(z3, [
       { artifact: fns.artifactFunctionChangeInterest, activeIndex: 2 },
     ], {
-      nInputs: 6, nOutputs: 6, policy: POLICY.changeInterest, designatedInputs: [0],
+      nInputs: 6, nOutputs: 6, categories: LOAN_CATEGORIES, policy: POLICY.changeInterest, designatedInputs: [0],
       setup: (z3, s, tx) => {
         loanInput(s, tx.inputs[0]!);
         loanSidecarInput(s, tx.inputs[1]!, CAT.LOANKEY);
@@ -46,7 +46,7 @@ describe('loan functions — output pins from artifact bytecode', () => {
       { artifact: fns.artifactFunctionManage, activeIndex: 3 },
       priceContract(0),
     ], {
-      nInputs: 8, nOutputs: 9, policy: POLICY.manage, designatedInputs: [0, 1],
+      nInputs: 8, nOutputs: 9, categories: LOAN_CATEGORIES, policy: POLICY.manage, designatedInputs: [0, 1],
       setup: (z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE });
         loanInput(s, tx.inputs[1]!);
@@ -65,7 +65,7 @@ describe('loan functions — output pins from artifact bytecode', () => {
       { artifact: sp.artifactCollector, activeIndex: 4, abiIndex: 0, seeds: [seedCategory(CAT.PARYON), seedScript(SCRIPT.PROTOCOL_FEE)] },
       priceContract(0),
     ], {
-      nInputs: 6, nOutputs: 6, policy: POLICY.payInterest, designatedInputs: [0, 1, 4],
+      nInputs: 6, nOutputs: 6, categories: LOAN_CATEGORIES, policy: POLICY.payInterest, designatedInputs: [0, 1, 4],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE });
         loanInput(s, tx.inputs[1]!);

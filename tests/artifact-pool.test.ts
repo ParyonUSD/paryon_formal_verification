@@ -2,7 +2,7 @@ import { paryonArtifacts } from '@paryonusd/contracts';
 import { beforeAll, describe, it } from 'vitest';
 import { Capability } from '../src/model.js';
 import {
-  CAT, LoanFunction, POLICY, PoolFunction, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
+  CAT, LOAN_CATEGORIES, LoanFunction, POLICY, PoolFunction, SCRIPT, functionNftInput, loanInput, loanSidecarInput, pin,
 } from '../src/covenants/common.js';
 import { buildFromArtifact, type CovenantSpec } from '../src/script/fromArtifact.js';
 import { seedCategory, seedOpaque, seedScript } from '../src/script/interpreter.js';
@@ -32,7 +32,7 @@ describe('stability-pool subsystem — derived from artifact bytecode', () => {
       { artifact: pf.artifactFunctionAddLiquidity, activeIndex: 2, seeds: [seedCategory(CAT.PARYON)] },
       stabilityPool(0), poolSidecar(1),
     ], {
-      nInputs: 5, nOutputs: 6, policy: POLICY.addLiquidity, designatedInputs: [0],
+      nInputs: 5, nOutputs: 6, categories: LOAN_CATEGORIES, policy: POLICY.addLiquidity, designatedInputs: [0],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.POOL, capability: Capability.MINTING, script: SCRIPT.STABILITY_POOL });
         pin(s, tx.inputs[1]!, { category: CAT.PARYON, capability: Capability.NONE, script: SCRIPT.POOL_SIDECAR });
@@ -46,7 +46,7 @@ describe('stability-pool subsystem — derived from artifact bytecode', () => {
       { artifact: pf.artifactFunctionWithdrawFromPool, activeIndex: 2 },
       stabilityPool(0), poolSidecar(1),
     ], {
-      nInputs: 5, nOutputs: 7, policy: POLICY.withdraw, designatedInputs: [0],
+      nInputs: 5, nOutputs: 7, categories: LOAN_CATEGORIES, policy: POLICY.withdraw, designatedInputs: [0],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.POOL, capability: Capability.MINTING, script: SCRIPT.STABILITY_POOL });
         pin(s, tx.inputs[1]!, { category: CAT.PARYON, capability: Capability.NONE, script: SCRIPT.POOL_SIDECAR });
@@ -60,7 +60,7 @@ describe('stability-pool subsystem — derived from artifact bytecode', () => {
     await expectArtifactSafe(z3, buildFromArtifact(z3, [
       { artifact: sp.artifactPayout, activeIndex: 0 },
     ], {
-      nInputs: 3, nOutputs: 3, policy: POLICY.payout, designatedInputs: [0],
+      nInputs: 3, nOutputs: 3, categories: LOAN_CATEGORIES, policy: POLICY.payout, designatedInputs: [0],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.POOL, capability: Capability.MINTING, script: SCRIPT.PAYOUT });
         pin(s, tx.inputs[1]!, { category: CAT.POOL, capability: Capability.IMMUTABLE }); // staking receipt
@@ -76,7 +76,7 @@ describe('stability-pool subsystem — derived from artifact bytecode', () => {
       { artifact: sp.artifactCollector, activeIndex: 3, abiIndex: 1, seeds: [seedCategory(CAT.PARYON), seedScript(SCRIPT.PROTOCOL_FEE)] },
       stabilityPool(0), poolSidecar(1),
     ], {
-      nInputs: 5, nOutputs: 7, policy: POLICY.newPeriod, designatedInputs: [0, 3],
+      nInputs: 5, nOutputs: 7, categories: LOAN_CATEGORIES, policy: POLICY.newPeriod, designatedInputs: [0, 3],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.POOL, capability: Capability.MINTING, script: SCRIPT.STABILITY_POOL });
         pin(s, tx.inputs[1]!, { category: CAT.PARYON, capability: Capability.NONE, script: SCRIPT.POOL_SIDECAR });
@@ -96,7 +96,7 @@ describe('stability-pool subsystem — derived from artifact bytecode', () => {
       specs.push({ artifact: pf.artifactFunctionLiquidateLoan, activeIndex: 6, seeds: [seedCategory(CAT.PARYON)] });
     }
     return buildFromArtifact(z3, specs, {
-      nInputs: 8, nOutputs: 8, policy: POLICY.liquidate, designatedInputs: [0, 1, 4],
+      nInputs: 8, nOutputs: 8, categories: LOAN_CATEGORIES, policy: POLICY.liquidate, designatedInputs: [0, 1, 4],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE });
         loanInput(s, tx.inputs[1]!);

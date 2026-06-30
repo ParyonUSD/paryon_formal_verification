@@ -13,18 +13,19 @@ export type Bool = ReturnType<Z3['Bool']['const']>;
 /** A Z3 solver instance in our context. */
 export type Z3Solver = InstanceType<Z3['Solver']>;
 
-// Memoise on globalThis (not a module local): vitest may re-evaluate this module
-// once per test file even in a single fork, and each fresh Z3 instance holds a
-// large WebAssembly.Memory. Sharing one promise across re-evaluations keeps the
-// whole run to a single Z3 instance.
-const GLOBAL_KEY = '__z3_solver_ts_context__';
-type GlobalWithZ3 = typeof globalThis & { [GLOBAL_KEY]?: Promise<Z3> };
+// Memoise on `process`, not a module local or globalThis. z3-solver's init() builds a fresh
+// WebAssembly.Memory that is never freed, so Z3 must boot at most once per process. vitest resets the
+// module registry / globalThis between test files, so those memos would not survive isolation and Z3
+// would re-init (and leak wasm) per file; `process` does survive it. run-tests.mjs gives each file its
+// own process, so this boots Z3 once per file and reclaims it when the file's process exits.
+const KEY = '__z3_solver_ts_context__';
+type ProcessWithZ3 = NodeJS.Process & { [KEY]?: Promise<Z3> };
 
-/** Initialise Z3 once and reuse the context (its wasm build is expensive to boot). */
+/** Initialise Z3 once per process and reuse the context (its wasm build is expensive to boot). */
 export async function getContext(): Promise<Z3> {
-  const g = globalThis as GlobalWithZ3;
-  g[GLOBAL_KEY] ??= init().then(({ Context }) => Context('main'));
-  return g[GLOBAL_KEY];
+  const p = process as ProcessWithZ3;
+  p[KEY] ??= init().then(({ Context }) => Context('main'));
+  return p[KEY];
 }
 
 /** Sum a list of Int expressions, returning 0 for the empty list. */

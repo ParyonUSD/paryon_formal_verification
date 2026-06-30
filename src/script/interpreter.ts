@@ -229,7 +229,9 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
 
         // comparisons
         case Op.OP_EQUAL: { const b = pop(), a = pop(); push({ k: 'bool', e: equalConstraint(a, b) }); break; }
-        case Op.OP_EQUALVERIFY: { const b = pop(), a = pop(); const c = equalConstraint(a, b); if (c) cons.push(c); break; }
+        case Op.OP_EQUALVERIFY: {
+          const b = pop(), a = pop(); const c = equalConstraint(a, b); if (c) cons.push(c); break;
+        }
         case Op.OP_NUMEQUAL: { const b = pop(), a = pop(); push(numEqResult(a, b)); break; }
         case Op.OP_NUMEQUALVERIFY: { const b = pop(), a = pop(); verify(numEqResult(a, b)); break; }
         case Op.OP_LESSTHANOREQUAL: case Op.OP_GREATERTHANOREQUAL:
@@ -263,12 +265,22 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         case Op.OP_SWAP: { const b = pop(), a = pop(); push(b); push(a); break; }
         case Op.OP_ROT: { const c = pop(), b = pop(), a = pop(); push(b); push(c); push(a); break; }
         case Op.OP_2DUP: { const b = stack[stack.length - 1]!, a = stack[stack.length - 2]!; push(a); push(b); break; }
-        case Op.OP_3DUP: { const c = stack[stack.length - 1]!, b = stack[stack.length - 2]!, a = stack[stack.length - 3]!; push(a); push(b); push(c); break; }
-        case Op.OP_2SWAP: { const d = pop(), c = pop(), b = pop(), a = pop(); push(c); push(d); push(a); push(b); break; }
+        case Op.OP_3DUP: {
+          const c = stack[stack.length - 1]!, b = stack[stack.length - 2]!, a = stack[stack.length - 3]!;
+          push(a); push(b); push(c); break;
+        }
+        case Op.OP_2SWAP: {
+          const d = pop(), c = pop(), b = pop(), a = pop(); push(c); push(d); push(a); push(b); break;
+        }
         case Op.OP_2OVER: { const a = stack[stack.length - 4]!, b = stack[stack.length - 3]!; push(a); push(b); break; }
-        case Op.OP_2ROT: { const f = pop(), e = pop(), d = pop(), c = pop(), b = pop(), a = pop(); push(c); push(d); push(e); push(f); push(a); push(b); break; }
+        case Op.OP_2ROT: {
+          const f = pop(), e = pop(), d = pop(), c = pop(), b = pop(), a = pop();
+          push(c); push(d); push(e); push(f); push(a); push(b); break;
+        }
         case Op.OP_PICK: { const n = toIndex(pop()); push(stack[stack.length - 1 - n]!); break; }
-        case Op.OP_ROLL: { const n = toIndex(pop()); const v = stack.splice(stack.length - 1 - n, 1)[0]!; push(v); break; }
+        case Op.OP_ROLL: {
+          const n = toIndex(pop()); const v = stack.splice(stack.length - 1 - n, 1)[0]!; push(v); break;
+        }
         case Op.OP_DEPTH: push(num(null)); break;
 
         // add/sub stay concrete on concrete bytes (used to compute output/input indices)
@@ -390,13 +402,15 @@ function countPresent(z3: Z3, tx: SymbolicTx, of: 'in' | 'out'): Num {
 }
 
 /** Find the matching OP_ELSE / OP_ENDIF for an OP_IF/OP_NOTIF at `ifIp`. */
-function scanBranch(script: ScriptOps, ifIp: number): { thenEnd: number; elseStart: number | null; endIp: number } {
+function scanBranch(script: ScriptOps, ifIp: number): { elseStart: number | null; endIp: number } {
   let depth = 0, elseStart: number | null = null;
   for (let i = ifIp + 1; i < script.length; i++) {
     const op = script[i];
     if (op === Op.OP_IF || op === Op.OP_NOTIF) depth++;
-    else if (op === Op.OP_ENDIF) { if (depth === 0) return { thenEnd: elseStart ?? i, elseStart: elseStart === null ? null : elseStart + 1, endIp: i + 1 }; depth--; }
-    else if (op === Op.OP_ELSE && depth === 0) elseStart = i;
+    else if (op === Op.OP_ENDIF) {
+      if (depth > 0) { depth--; continue; }
+      return { elseStart: elseStart === null ? null : elseStart + 1, endIp: i + 1 };
+    } else if (op === Op.OP_ELSE && depth === 0) elseStart = i;
   }
   throw new Error('unmatched OP_IF');
 }

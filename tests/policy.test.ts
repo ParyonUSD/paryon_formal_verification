@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { compose, type Covenant } from '../src/covenant.js';
+import { compose, type Covenant } from './covenant.js';
 import { addConsensusRules } from '../src/consensus.js';
 import { Capability, Script, declareTx } from '../src/model.js';
 import { leakWitness } from '../src/policy.js';

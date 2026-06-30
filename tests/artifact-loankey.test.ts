@@ -1,7 +1,7 @@
 import { paryonArtifacts } from '@paryonusd/contracts';
 import { beforeAll, describe, it } from 'vitest';
 import { Capability, NO_CATEGORY } from '../src/model.js';
-import { CAT, POLICY, SCRIPT, pin } from '../src/covenants/common.js';
+import { CAT, LOAN_CATEGORIES, POLICY, SCRIPT, pin } from '../src/covenants/common.js';
 import { buildFromArtifact, type CovenantSpec } from '../src/script/fromArtifact.js';
 import { seedOpaque, seedScript } from '../src/script/interpreter.js';
 import { getContext, type Z3 } from '../src/z3.js';
@@ -40,7 +40,7 @@ describe('borrowing + loanKey factory — derived from artifact bytecode', () =>
     ];
     if (withPrice) specs.push(priceContract(1)); // PriceContract.sharePrice recreates the price at output 1
     return buildFromArtifact(z3, specs, {
-      nInputs: 5, nOutputs: 11, policy: POLICY.borrow, designatedInputs: [0, 1],
+      nInputs: 5, nOutputs: 11, categories: LOAN_CATEGORIES, policy: POLICY.borrow, designatedInputs: [0, 1],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MINTING, script: SCRIPT.BORROWING });
         pin(s, tx.inputs[1]!, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE });
@@ -63,7 +63,7 @@ describe('borrowing + loanKey factory — derived from artifact bytecode', () =>
       // constructor: loanKeyOriginEnforcerLockingScript, loanKeyOriginProofLockingScript
       { artifact: lk.artifactLoanKeyFactory, activeIndex: 1, seeds: [seedScript(SCRIPT.ORIGIN_ENFORCER), seedScript(SCRIPT.ORIGIN_PROOF)] },
     ], {
-      nInputs: 3, nOutputs: 6, policy: POLICY.loanKeyFactory, designatedInputs: [1],
+      nInputs: 3, nOutputs: 6, categories: LOAN_CATEGORIES, policy: POLICY.loanKeyFactory, designatedInputs: [1],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: NO_CATEGORY }); // vout0 genesis-source UTXO (BCH only)
         pin(s, tx.inputs[1]!, { category: CAT.LOANKEY_FACTORY, capability: Capability.MINTING, script: SCRIPT.LOANKEY_FACTORY });

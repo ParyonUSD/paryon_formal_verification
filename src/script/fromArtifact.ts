@@ -1,5 +1,4 @@
 import { addConsensusRules } from '../consensus.js';
-import { LOAN_CATEGORIES } from '../covenants/common.js';
 import { declareTx, type SymbolicTx } from '../model.js';
 import { inputsRespectInvariant, privilegedInputsOnlyAt, type LeakPolicy } from '../policy.js';
 import type { Z3, Z3Solver } from '../z3.js';
@@ -27,6 +26,8 @@ export interface CovenantSpec {
 export interface ArtifactConfig {
   nInputs: number;
   nOutputs: number;
+  /** Category ids the consensus tally is enforced over (the system's category universe). */
+  categories: number[];
   policy: LeakPolicy;
   designatedInputs: number[];
   /** Template scaffolding: input categories/capabilities/scripts, partner covenants, id bindings. */
@@ -73,7 +74,7 @@ export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactCo
   const combos = cartesian(perCovenantPaths);
   const solvers = combos.map((combo) => {
     const s = new z3.Solver();
-    addConsensusRules(z3, s, tx, LOAN_CATEGORIES);
+    addConsensusRules(z3, s, tx, cfg.categories);
     cfg.setup(z3, s, tx);
     s.add(inputsRespectInvariant(z3, tx, cfg.policy));
     s.add(privilegedInputsOnlyAt(z3, tx, cfg.policy, cfg.designatedInputs));

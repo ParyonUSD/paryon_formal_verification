@@ -2,13 +2,11 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // z3-solver boots a large wasm instance per test file; running files in
-    // parallel (or all in one shared process) keeps several instances alive at
-    // once and exhausts memory. Run files sequentially in isolated forks so at
-    // most one Z3 instance is live at a time.
+    // `pnpm test` runs each file in its own process via run-tests.mjs (see that file for why z3-solver
+    // forces this). This config governs single-file runs (`pnpm test:watch`, or `vitest run <file>`):
+    // forks so the wasm worker dies with the process, and a generous timeout for the heavier solves.
     pool: 'forks',
-    fileParallelism: false,
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

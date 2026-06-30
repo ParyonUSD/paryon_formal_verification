@@ -36,31 +36,24 @@ export const PoolFunction = {
   WITHDRAW_LIQUIDITY: 0x04,
 } as const;
 
-export const LoanStatus = {
-  NEW_LOAN: 0x00,
-  FIRST_PERIOD: 0x01,
-  MATURE_LOAN: 0x02,
-} as const;
-
 export const INTERNAL_CATEGORIES = [CAT.PARYON, CAT.POOL, CAT.REDEEMER, CAT.LOANKEY_FACTORY];
 
 /** Every category id the consensus tally is enforced over. */
 export const LOAN_CATEGORIES = [CAT.PARYON, CAT.POOL, CAT.REDEEMER, CAT.LOANKEY_FACTORY, CAT.LOANKEY, CAT.LOANKEY_2];
 
 /** Reusable ownership rules (who rightfully holds each privileged capability). */
+const own = (category: number, capability: number, scripts: number[]): OwnershipRule =>
+  ({ category, capability, scripts });
 export const OWN = {
-  /** paryon mutable lives on loans and price contracts. */
-  paryonMutableLoanPrice: { category: CAT.PARYON, capability: Capability.MUTABLE, scripts: [SCRIPT.LOAN, SCRIPT.PRICE] },
-  /** paryon mutable lives on loans only (templates with no price input). */
-  paryonMutableLoan: { category: CAT.PARYON, capability: Capability.MUTABLE, scripts: [SCRIPT.LOAN] },
-  poolMinting: { category: CAT.POOL, capability: Capability.MINTING, scripts: [SCRIPT.STABILITY_POOL] },
-  /** pool minting lives on the StabilityPool and on each epoch's Payout contract. */
-  poolMintingFull: { category: CAT.POOL, capability: Capability.MINTING, scripts: [SCRIPT.STABILITY_POOL, SCRIPT.PAYOUT] },
-  poolMutableCollector: { category: CAT.POOL, capability: Capability.MUTABLE, scripts: [SCRIPT.COLLECTOR] },
-  redeemerMutable: { category: CAT.REDEEMER, capability: Capability.MUTABLE, scripts: [SCRIPT.REDEMPTION] },
-  redeemerMinting: { category: CAT.REDEEMER, capability: Capability.MINTING, scripts: [SCRIPT.REDEEMER] },
-  paryonMintingBorrowing: { category: CAT.PARYON, capability: Capability.MINTING, scripts: [SCRIPT.BORROWING] },
-  loanKeyFactoryMinting: { category: CAT.LOANKEY_FACTORY, capability: Capability.MINTING, scripts: [SCRIPT.LOANKEY_FACTORY] },
+  paryonMutableLoanPrice: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN, SCRIPT.PRICE]),
+  paryonMutableLoan: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN]), // templates with no price input
+  poolMinting: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL]),
+  poolMintingFull: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL, SCRIPT.PAYOUT]), // pool + each Payout
+  poolMutableCollector: own(CAT.POOL, Capability.MUTABLE, [SCRIPT.COLLECTOR]),
+  redeemerMutable: own(CAT.REDEEMER, Capability.MUTABLE, [SCRIPT.REDEMPTION]),
+  redeemerMinting: own(CAT.REDEEMER, Capability.MINTING, [SCRIPT.REDEEMER]),
+  paryonMintingBorrowing: own(CAT.PARYON, Capability.MINTING, [SCRIPT.BORROWING]),
+  loanKeyFactoryMinting: own(CAT.LOANKEY_FACTORY, Capability.MINTING, [SCRIPT.LOANKEY_FACTORY]),
 } satisfies Record<string, OwnershipRule>;
 
 /**

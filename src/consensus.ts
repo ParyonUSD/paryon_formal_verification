@@ -1,18 +1,11 @@
 import { Capability, MAX_CATEGORY, MAX_SCRIPT, NO_CATEGORY, Script, type SymbolicTx, type Utxo } from './model.js';
 import { any, countIf, type Bool, type Z3, type Z3Solver } from './z3.js';
 
-/**
- * Value/standardness constants. The capability-leak property does NOT depend on
- * BCH values or fungible amounts (neither can move an NFT capability), so the
- * consensus model below deliberately omits value conservation, dust limits and
- * fungible conservation — they only added unbounded-integer arithmetic that made
- * Z3 slow without affecting the property. Dropping them is sound for safety
- * proofs: it yields a *superset* of real transactions, so leak-freedom on the
- * model implies leak-freedom on-chain. These constants remain only so covenant
- * models can still pin concrete values where it aids readability.
- */
-export const BCH_DUST = 540;
-export const TOKEN_DUST = 1000;
+// This models only the part of CashTokens validation that governs NFT-capability movement (the
+// per-category token tally + structural rules). It deliberately omits BCH value/fee conservation,
+// fungible amounts, standardness/dust, commitment contents, timelocks and signatures, none of which
+// can move a capability. See docs/scope.md for the full "what is / isn't checked" and why that is
+// sound for a leak-freedom proof.
 
 /**
  * Structural well-formedness + presence/contiguity. "Absent" slots are pinned to

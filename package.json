@@ -6,7 +6,9 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "lint": "eslint .",
+    "check": "tsc --noEmit && eslint .",
+    "test": "node run-tests.mjs",
     "test:watch": "vitest"
   },
   "keywords": [
@@ -27,8 +29,12 @@
     "z3-solver": "^4.16.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/node": "^26.0.1",
+    "eslint": "^9.39.4",
+    "globals": "^17.7.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1",
     "vitest": "^4.1.9"
   }
 }

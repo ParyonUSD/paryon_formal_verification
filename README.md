@@ -55,27 +55,33 @@ So the three ParyonUSD verification tools cover different axes, all against the 
 - this repo: exhaustive proof of the capability-leak invariant over all consensus-valid transactions.
 - `verify_contract_deployment`: the live chain runs these artifacts from an honest base state.
 
+For the full breakdown of exactly what is and is not checked (e.g. value conservation, dust, and
+standardness are not), and which code is general BCH/CashTokens machinery versus ParyonUSD-specific,
+see **[docs/scope.md](docs/scope.md)**.
+
 ## Layout
 
-| file | role |
-|---|---|
-| `src/z3.ts` | Z3 context bootstrap + small helpers (`sum`, `countIf`, `any`) |
-| `src/model.ts` | symbolic UTXO/transaction model: `(value, category, fts, capability, script)` |
-| `src/consensus.ts` | **trusted base**: CashTokens token tally + standardness |
-| `src/policy.ts` | the capability-leak policy + leak witness |
-| `src/covenant.ts` | per-contract spend paths and multi-covenant composition |
-
-The consensus tally fixes the gap in the Python model: without a minting input
-it now enforces `minting_out == 0`, `mutable_out <= mutable_in`, **and**
-`nft_out <= nft_in` per category.
+The engine (general BCH/CashTokens) lives in `src/` (`z3.ts`, `model.ts`, `consensus.ts`, `policy.ts`,
+`covenant.ts`, `script/*`); the ParyonUSD instantiation lives in `src/covenants/` (the `ids.ts`
+registry and `common.ts` policy/helpers) and `tests/`. The consensus tally is the trusted base:
+without a minting input it enforces `minting_out == 0`, `mutable_out <= mutable_in`, **and**
+`nft_out <= nft_in` per category. See [docs/scope.md](docs/scope.md) for the per-file map.
 
 ## Commands
 
 ```bash
 pnpm install
 pnpm typecheck   # tsc --noEmit
-pnpm test        # vitest run
+pnpm lint        # eslint (matches the paryon_library setup)
+pnpm check       # typecheck + lint
+pnpm test        # runs each test file in its own process (run-tests.mjs)
 ```
+
+`pnpm test` runs each test file in a fresh process: z3-solver never frees its wasm memory, so a single
+shared process accumulates it across files and later solves slow by orders of magnitude (and the wasm
+worker's unclean teardown makes the run exit non-zero even when every test passes). A fresh process per
+file reclaims everything on exit. Use `pnpm test:watch`, or `pnpm exec vitest run tests/<file>`, while
+iterating on a single file.
 
 ## Coverage
 

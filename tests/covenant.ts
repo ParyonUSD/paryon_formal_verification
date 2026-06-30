@@ -1,5 +1,5 @@
-import type { SymbolicTx } from './model.js';
-import type { Z3, Z3Solver } from './z3.js';
+import type { SymbolicTx } from '../src/model.js';
+import type { Z3, Z3Solver } from '../src/z3.js';
 
 /**
  * A covenant models one spend path, pinned at fixed input/output indices within a
