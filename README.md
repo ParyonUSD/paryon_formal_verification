@@ -67,6 +67,12 @@ registry and `common.ts` policy/helpers) and `tests/`. The consensus tally is th
 without a minting input it enforces `minting_out == 0`, `mutable_out <= mutable_in`, **and**
 `nft_out <= nft_in` per category. See [docs/scope.md](docs/scope.md) for the per-file map.
 
+The artifact interpreter is split by soundness obligation. `script/interpreter.ts` is the stack machine
+and must be *faithful* (a mis-routed value or mis-matched branch would silently constrain the wrong
+output, which the superset argument does not catch). `script/capability.ts` is the abstraction that
+decides which comparisons carry a capability, and only needs to be *conservative*: it drops constraints
+and never adds them, so it can only widen the transaction set it admits.
+
 ## Commands
 
 ```bash

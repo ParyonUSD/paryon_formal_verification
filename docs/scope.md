@@ -55,7 +55,11 @@ transaction templates are ParyonUSD-specific.
 | `src/consensus.ts` | CashTokens token-validation tally + structural rules (the trusted base) |
 | `src/policy.ts` | the leak-property *mechanism* (`leakWitness`, inductive hypothesis), parameterised by a `LeakPolicy` |
 | `src/covenant.ts` | `Covenant` interface + `compose` (small, used by an illustrative test) |
-| `src/script/*` | Bitcoin Script symbolic interpreter, CashTokens introspection, artifact loading + stack seeding |
+| `src/script/script.ts` | opcode table + ASM decoding (from `@cashscript/utils`) and CScriptNum helpers |
+| `src/script/value.ts` | the symbolic value language: the abstract stack values and their constructors |
+| `src/script/interpreter.ts` | the stack machine — opcode dispatch, stack routing, CAT/SPLIT, branch forking. Obligation: **faithful** (must match the VM exactly; the half the superset argument does *not* protect) |
+| `src/script/capability.ts` | the capability abstraction — which comparisons can move a capability, and their Z3 constraints. Obligation: **conservative** (drops constraints only, so it can only widen the modelled tx set) |
+| `src/script/fromArtifact.ts` | artifact loading + stack seeding; assembles the per-covenant solvers |
 
 **ParyonUSD-specific (the instantiation):**
 
