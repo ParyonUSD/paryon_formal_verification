@@ -39,22 +39,22 @@ export interface LeakPolicy {
 }
 
 /** True when a UTXO carries an internal-authority category with mutable/minting capability. */
-export function isInternalPrivileged(z3: Z3, u: Utxo, policy: LeakPolicy): Bool {
-  const isInternal = any(z3, policy.internalAuthorityCategories.map((c) => u.category.eq(c)));
+export function isInternalPrivileged(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
+  const isInternal = any(z3, policy.internalAuthorityCategories.map((c) => utxo.category.eq(c)));
   const isPrivilegedCap = z3.Or(
-    u.capability.eq(Capability.MUTABLE),
-    u.capability.eq(Capability.MINTING),
+    utxo.capability.eq(Capability.MUTABLE),
+    utxo.capability.eq(Capability.MINTING),
   );
-  return z3.And(u.present, isInternal, isPrivilegedCap);
+  return z3.And(utxo.present, isInternal, isPrivilegedCap);
 }
 
-/** True when this UTXO's (category, capability) is held by one of its rightful owner covenants. */
-function ownedByCovenant(z3: Z3, u: Utxo, policy: LeakPolicy): Bool {
+/** True when this UTXO'solver (category, capability) is held by one of its rightful owner covenants. */
+function ownedByCovenant(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
   return any(z3, policy.ownership.map((rule) =>
     z3.And(
-      u.category.eq(rule.category),
-      u.capability.eq(rule.capability),
-      any(z3, rule.scripts.map((sc) => u.script.eq(sc))),
+      utxo.category.eq(rule.category),
+      utxo.capability.eq(rule.capability),
+      any(z3, rule.scripts.map((sc) => utxo.script.eq(sc))),
     ),
   ));
 }
@@ -71,7 +71,7 @@ function ownedByCovenant(z3: Z3, u: Utxo, policy: LeakPolicy): Bool {
  */
 export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
   return z3.And(
-    ...tx.inputs.map((u) => z3.Implies(isInternalPrivileged(z3, u, policy), ownedByCovenant(z3, u, policy))),
+    ...tx.inputs.map((utxo) => z3.Implies(isInternalPrivileged(z3, utxo, policy), ownedByCovenant(z3, utxo, policy))),
   );
 }
 
@@ -81,7 +81,7 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
  * On-chain, a UTXO carrying an internal mutable/minting capability can only be
  * spent by running the covenant that governs it (a loan needs its loan-function
  * machinery, the collector needs Collector.collect, etc.), which in turn pins
- * that UTXO's output. A model that lets the solver add an extra "ghost"
+ * that UTXO'solver output. A model that lets the solver add an extra "ghost"
  * privileged input — owned by the right script but governed by nothing — would
  * inflate the tally and report spurious leaks on templates without an output
  * cap. This pins which input indices may carry a privileged capability; every
@@ -93,8 +93,8 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
  */
 export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy, allowed: number[]): Bool {
   return z3.And(
-    ...tx.inputs.map((u, i) =>
-      allowed.includes(i) ? z3.Bool.val(true) : z3.Not(isInternalPrivileged(z3, u, policy)),
+    ...tx.inputs.map((utxo, i) =>
+      allowed.includes(i) ? z3.Bool.val(true) : z3.Not(isInternalPrivileged(z3, utxo, policy)),
     ),
   );
 }
@@ -106,7 +106,7 @@ export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolic
  * counterexample transaction.
  */
 export function leakWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
-  return any(z3, tx.outputs.map((u) =>
-    z3.And(isInternalPrivileged(z3, u, policy), u.script.eq(Script.ATTACKER)),
+  return any(z3, tx.outputs.map((utxo) =>
+    z3.And(isInternalPrivileged(z3, utxo, policy), utxo.script.eq(Script.ATTACKER)),
   ));
 }

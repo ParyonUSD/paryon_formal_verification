@@ -181,14 +181,14 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
           const { elseStart, endIp } = scanBranch(script, i);
           const condE = cond.k === 'bool' ? cond.e : null;
           const go = (condValue: boolean): void => {
-            const d = new Map(decided);
-            d.set(cond, condValue);
+            const branchDecided = new Map(decided);
+            branchDecided.set(cond, condValue);
             const c2 = cons.slice();
             // When the condition is a real predicate (e.g. an output-count compare),
             // assert it on the taken path so the path is consistent with the branch.
             if (condE) c2.push(condValue ? condE : z3.Not(condE));
             const execThen = isIf ? condValue : !condValue;
-            run(execThen ? i + 1 : (elseStart ?? endIp), stack.slice(), c2, d);
+            run(execThen ? i + 1 : (elseStart ?? endIp), stack.slice(), c2, branchDecided);
           };
           if (cond.k === 'bytes') go(bytesToNum(cond.v) !== 0); // concrete (e.g. seeded selector) — one branch
           else {

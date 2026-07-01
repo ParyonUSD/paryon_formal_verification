@@ -4,22 +4,24 @@ export { asmToScript, Op };
 export type { Script };
 
 /** Reverse opcode lookup (number -> name) for diagnostics. */
-const NAMES = new Map<number, string>(Object.entries(Op).map(([k, v]) => [v as number, k]));
+const NAMES = new Map<number, string>(
+  Object.entries(Op).map(([name, opcode]) => [opcode as number, name]),
+);
 export function opName(op: number): string {
   return NAMES.get(op) ?? `OP_UNKNOWN_${op}`;
 }
 
 /** Interpret a byte string as a little-endian CScriptNum (script's number encoding). */
-export function bytesToNum(b: Uint8Array): number {
-  if (b.length === 0) return 0;
-  let n = 0;
-  for (let i = 0; i < b.length; i++) n += b[i]! * 2 ** (8 * i);
-  const negBit = 0x80;
-  if ((b[b.length - 1]! & negBit) !== 0) {
+export function bytesToNum(bytes: Uint8Array): number {
+  if (bytes.length === 0) return 0;
+  let value = 0;
+  for (let i = 0; i < bytes.length; i++) value += bytes[i]! * 2 ** (8 * i);
+  const signBit = 0x80;
+  if ((bytes[bytes.length - 1]! & signBit) !== 0) {
     // negative (sign bit set) — not expected for our indices/values, but handle correctly.
-    n -= 2 ** (8 * b.length - 1);
+    value -= 2 ** (8 * bytes.length - 1);
   }
-  return n;
+  return value;
 }
 
 /** The small-integer opcodes OP_1..OP_16 push the numbers 1..16; OP_1NEGATE pushes -1. */

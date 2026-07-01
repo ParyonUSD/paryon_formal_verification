@@ -60,8 +60,8 @@ export function seedSelector(index: number): SVal { return { k: 'bytes', v: numT
 export function numToBytes(n: number): Uint8Array {
   if (n === 0) return new Uint8Array();
   const out: number[] = [];
-  let x = Math.abs(n);
-  while (x > 0) { out.push(x & 0xff); x = Math.floor(x / 256); }
+  let magnitude = Math.abs(n);
+  while (magnitude > 0) { out.push(magnitude & 0xff); magnitude = Math.floor(magnitude / 256); }
   if (n < 0) out[out.length - 1]! |= 0x80;
   return new Uint8Array(out);
 }

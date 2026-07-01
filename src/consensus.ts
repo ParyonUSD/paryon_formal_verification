@@ -12,26 +12,26 @@ import { any, countIf, type Bool, type Z3, type Z3Solver } from './z3.js';
  * no-token so they cannot masquerade as carrying a capability; present slots must
  * respect category <-> token consistency.
  */
-function addStructure(z3: Z3, s: Z3Solver, slots: Utxo[]): void {
-  slots.forEach((u, i) => {
-    s.add(u.capability.ge(Capability.NONE), u.capability.le(Capability.MINTING));
+function addStructure(z3: Z3, solver: Z3Solver, slots: Utxo[]): void {
+  slots.forEach((utxo, i) => {
+    solver.add(utxo.capability.ge(Capability.NONE), utxo.capability.le(Capability.MINTING));
     // Finite enum domains for category/script (essential for solver performance).
-    s.add(u.category.ge(0), u.category.le(MAX_CATEGORY));
-    s.add(u.script.ge(0), u.script.le(MAX_SCRIPT));
+    solver.add(utxo.category.ge(0), utxo.category.le(MAX_CATEGORY));
+    solver.add(utxo.script.ge(0), utxo.script.le(MAX_SCRIPT));
 
-    const hasNft = u.capability.ge(Capability.IMMUTABLE);
-    const hasToken = z3.Or(hasNft, u.fts.gt(0));
+    const hasNft = utxo.capability.ge(Capability.IMMUTABLE);
+    const hasToken = z3.Or(hasNft, utxo.fts.gt(0));
 
-    s.add(
+    solver.add(
       z3.If(
-        u.present,
-        z3.And(u.fts.ge(0), z3.Eq(u.category.neq(NO_CATEGORY), hasToken)),
+        utxo.present,
+        z3.And(utxo.fts.ge(0), z3.Eq(utxo.category.neq(NO_CATEGORY), hasToken)),
         z3.And(
-          u.category.eq(NO_CATEGORY),
-          u.fts.eq(0),
-          u.capability.eq(Capability.NONE),
-          u.script.eq(Script.ATTACKER),
-          u.commitment.eq(0),
+          utxo.category.eq(NO_CATEGORY),
+          utxo.fts.eq(0),
+          utxo.capability.eq(Capability.NONE),
+          utxo.script.eq(Script.ATTACKER),
+          utxo.commitment.eq(0),
         ),
       ),
     );
@@ -39,18 +39,18 @@ function addStructure(z3: Z3, s: Z3Solver, slots: Utxo[]): void {
     // Contiguity: a present slot implies the previous slot is present, so the
     // input/output count is a well-defined prefix.
     const prev = slots[i - 1];
-    if (prev) s.add(z3.Implies(u.present, prev.present));
+    if (prev) solver.add(z3.Implies(utxo.present, prev.present));
   });
 }
 
-function isCat(u: Utxo, cat: number): Bool {
-  return u.category.eq(cat);
+function isCat(utxo: Utxo, cat: number): Bool {
+  return utxo.category.eq(cat);
 }
-function nftOfCat(z3: Z3, u: Utxo, cat: number): Bool {
-  return z3.And(u.present, isCat(u, cat), u.capability.ge(Capability.IMMUTABLE));
+function nftOfCat(z3: Z3, utxo: Utxo, cat: number): Bool {
+  return z3.And(utxo.present, isCat(utxo, cat), utxo.capability.ge(Capability.IMMUTABLE));
 }
-function capOfCat(z3: Z3, u: Utxo, cat: number, capability: number): Bool {
-  return z3.And(u.present, isCat(u, cat), u.capability.eq(capability));
+function capOfCat(z3: Z3, utxo: Utxo, cat: number, capability: number): Bool {
+  return z3.And(utxo.present, isCat(utxo, cat), utxo.capability.eq(capability));
 }
 
 /**
@@ -71,19 +71,19 @@ function capOfCat(z3: Z3, u: Utxo, cat: number, capability: number): Bool {
  * Fungible-token conservation is intentionally omitted: fungible tokens carry no
  * capability, so they are irrelevant to leak-freedom (a separate property).
  */
-function addTokenTally(z3: Z3, s: Z3Solver, tx: SymbolicTx, categories: number[]): void {
+function addTokenTally(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: number[]): void {
   for (const cat of categories) {
-    const hasMintingIn = any(z3, tx.inputs.map((u) => capOfCat(z3, u, cat, Capability.MINTING)));
+    const hasMintingIn = any(z3, tx.inputs.map((utxo) => capOfCat(z3, utxo, cat, Capability.MINTING)));
 
-    const mintingOut = countIf(z3, tx.outputs.map((u) => capOfCat(z3, u, cat, Capability.MINTING)));
-    const mutableIn = countIf(z3, tx.inputs.map((u) => capOfCat(z3, u, cat, Capability.MUTABLE)));
-    const mutableOut = countIf(z3, tx.outputs.map((u) => capOfCat(z3, u, cat, Capability.MUTABLE)));
-    const nftIn = countIf(z3, tx.inputs.map((u) => nftOfCat(z3, u, cat)));
-    const nftOut = countIf(z3, tx.outputs.map((u) => nftOfCat(z3, u, cat)));
+    const mintingOut = countIf(z3, tx.outputs.map((utxo) => capOfCat(z3, utxo, cat, Capability.MINTING)));
+    const mutableIn = countIf(z3, tx.inputs.map((utxo) => capOfCat(z3, utxo, cat, Capability.MUTABLE)));
+    const mutableOut = countIf(z3, tx.outputs.map((utxo) => capOfCat(z3, utxo, cat, Capability.MUTABLE)));
+    const nftIn = countIf(z3, tx.inputs.map((utxo) => nftOfCat(z3, utxo, cat)));
+    const nftOut = countIf(z3, tx.outputs.map((utxo) => nftOfCat(z3, utxo, cat)));
 
-    s.add(z3.Implies(z3.Not(hasMintingIn), mintingOut.eq(0)));
-    s.add(z3.Implies(z3.Not(hasMintingIn), mutableOut.le(mutableIn)));
-    s.add(z3.Implies(z3.Not(hasMintingIn), nftOut.le(nftIn)));
+    solver.add(z3.Implies(z3.Not(hasMintingIn), mintingOut.eq(0)));
+    solver.add(z3.Implies(z3.Not(hasMintingIn), mutableOut.le(mutableIn)));
+    solver.add(z3.Implies(z3.Not(hasMintingIn), nftOut.le(nftIn)));
   }
 }
 
@@ -92,8 +92,8 @@ function addTokenTally(z3: Z3, s: Z3Solver, tx: SymbolicTx, categories: number[]
  * finite set of concrete category ids the tally is enforced over (Z3 cannot
  * range over the unbounded category domain symbolically).
  */
-export function addConsensusRules(z3: Z3, s: Z3Solver, tx: SymbolicTx, categories: number[]): void {
-  addStructure(z3, s, tx.inputs);
-  addStructure(z3, s, tx.outputs);
-  addTokenTally(z3, s, tx, categories);
+export function addConsensusRules(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: number[]): void {
+  addStructure(z3, solver, tx.inputs);
+  addStructure(z3, solver, tx.outputs);
+  addTokenTally(z3, solver, tx, categories);
 }

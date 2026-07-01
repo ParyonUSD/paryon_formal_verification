@@ -26,12 +26,12 @@ export interface CovenantSpec {
 export interface ArtifactConfig {
   nInputs: number;
   nOutputs: number;
-  /** Category ids the consensus tally is enforced over (the system's category universe). */
+  /** Category ids the consensus tally is enforced over (the system'solver category universe). */
   categories: number[];
   policy: LeakPolicy;
   designatedInputs: number[];
   /** Template scaffolding: input categories/capabilities/scripts, partner covenants, id bindings. */
-  setup: (z3: Z3, s: Z3Solver, tx: SymbolicTx) => void;
+  setup: (z3: Z3, solver: Z3Solver, tx: SymbolicTx) => void;
 }
 
 export interface BuiltArtifact {
@@ -73,13 +73,13 @@ export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactCo
 
   const combos = cartesian(perCovenantPaths);
   const solvers = combos.map((combo) => {
-    const s = new z3.Solver();
-    addConsensusRules(z3, s, tx, cfg.categories);
-    cfg.setup(z3, s, tx);
-    s.add(inputsRespectInvariant(z3, tx, cfg.policy));
-    s.add(privilegedInputsOnlyAt(z3, tx, cfg.policy, cfg.designatedInputs));
-    for (const path of combo) for (const c of path.constraints) s.add(c);
-    return s;
+    const solver = new z3.Solver();
+    addConsensusRules(z3, solver, tx, cfg.categories);
+    cfg.setup(z3, solver, tx);
+    solver.add(inputsRespectInvariant(z3, tx, cfg.policy));
+    solver.add(privilegedInputsOnlyAt(z3, tx, cfg.policy, cfg.designatedInputs));
+    for (const path of combo) for (const c of path.constraints) solver.add(c);
+    return solver;
   });
 
   return { tx, policy: cfg.policy, solvers };

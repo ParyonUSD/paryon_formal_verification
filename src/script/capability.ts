@@ -4,7 +4,7 @@ import { Op } from './script.js';
 import { bytesToNum, leadingByte, type SVal } from './value.js';
 
 /**
- * The capability-abstraction layer: it interprets the interpreter's symbolic stack
+ * The capability-abstraction layer: it interprets the interpreter'solver symbolic stack
  * values (see value.ts) as capability constraints, and decides what is even relevant.
  *
  * Its obligation is *conservativeness*, not faithfulness: it emits a Z3 constraint
@@ -23,7 +23,7 @@ import { bytesToNum, leadingByte, type SVal } from './value.js';
  */
 
 // Category id base for genesis-minted categories (per genesis input index). Distinct from the
-// registry's category ids and outside the tallied/internal sets — a fresh, user-facing category.
+// registry'solver category ids and outside the tallied/internal sets — a fresh, user-facing category.
 // (LoanKeyFactory mints one as reservedTokenId + 0x02.)
 const GENESIS_BASE = 20;
 
@@ -50,12 +50,12 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   // We compare the *byte serialisation* of tokenCategory, captured as (catId, suffix class):
   //   0 = empty (no token), 1 = bare 32-byte (immutable NFT *or* fungible-only — indistinguishable),
   //   2 = +0x01 (mutable), 3 = +0x02 (minting).
-  /** Suffix class of a model slot's tokenCategory as a Z3 Int. */
+  /** Suffix class of a model slot'solver tokenCategory as a Z3 Int. */
   const catClass = (i: number, side: 'in' | 'out'): Num => {
-    const u = side === 'in' ? tx.inputs[i]! : tx.outputs[i]!;
-    return z3.If(u.category.eq(NO_CATEGORY), z3.Int.val(0),
-      z3.If(u.capability.le(Capability.IMMUTABLE), z3.Int.val(1),
-        z3.If(u.capability.eq(Capability.MUTABLE), z3.Int.val(2), z3.Int.val(3))));
+    const utxo = side === 'in' ? tx.inputs[i]! : tx.outputs[i]!;
+    return z3.If(utxo.category.eq(NO_CATEGORY), z3.Int.val(0),
+      z3.If(utxo.capability.le(Capability.IMMUTABLE), z3.Int.val(1),
+        z3.If(utxo.capability.eq(Capability.MUTABLE), z3.Int.val(2), z3.Int.val(3))));
   };
 
   type CatView = { catId: Num | number; cls: Num | number };
@@ -100,9 +100,9 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     sv.kind === 'const' ? sv.id : sv.kind === 'in' ? tx.inputs[sv.i]!.script : tx.outputs[sv.i]!.script;
 
   function eqScript(a: SVal, b: SVal): Bool | null {
-    const x = scriptView(a), y = scriptView(b);
-    if (!x || !y) return null;
-    return eqInt(scriptExpr(x), scriptExpr(y));
+    const viewA = scriptView(a), viewB = scriptView(b);
+    if (!viewA || !viewB) return null;
+    return eqInt(scriptExpr(viewA), scriptExpr(viewB));
   }
 
   // ---- count / commitment interpretation ----
@@ -170,5 +170,5 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
 
 function countPresent(z3: Z3, tx: SymbolicTx, of: 'in' | 'out'): Num {
   const slots = of === 'out' ? tx.outputs : tx.inputs;
-  return slots.reduce<Num>((acc, u) => acc.add(z3.If(u.present, z3.Int.val(1), z3.Int.val(0))), z3.Int.val(0));
+  return slots.reduce<Num>((acc, utxo) => acc.add(z3.If(utxo.present, z3.Int.val(1), z3.Int.val(0))), z3.Int.val(0));
 }

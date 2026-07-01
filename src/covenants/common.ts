@@ -15,7 +15,7 @@ export { CAT, SCRIPT } from './ids.js';
 /**
  * Function-NFT commitment identifiers (the single-byte ids the contracts authenticate by) and the
  * loan status byte — mirrors the canonical enums in @paryonusd/contracts. Used to pin commitments
- * where a contract branches on them (e.g. StabilityPool.interact's `commitment == 0x02`) instead of
+ * where a contract branches on them (e.g. StabilityPool.interact'solver `commitment == 0x02`) instead of
  * hardcoding magic numbers. Modelled as numbers since commitments are integers in our model.
  */
 export const LoanFunction = {
@@ -102,27 +102,27 @@ export interface UtxoSpec {
 }
 
 /** Mark a slot present and constrain the provided fields. */
-export function pin(s: Z3Solver, u: Utxo, spec: UtxoSpec): void {
-  s.add(u.present);
-  if (spec.script !== undefined) s.add(u.script.eq(spec.script));
-  if (spec.category !== undefined) s.add(u.category.eq(spec.category));
-  if (spec.capability !== undefined) s.add(u.capability.eq(spec.capability));
-  if (spec.fts !== undefined) s.add(u.fts.eq(spec.fts));
-  if (spec.value !== undefined) s.add(u.value.eq(spec.value));
-  if (spec.commitment !== undefined) s.add(u.commitment.eq(spec.commitment));
+export function pin(solver: Z3Solver, utxo: Utxo, spec: UtxoSpec): void {
+  solver.add(utxo.present);
+  if (spec.script !== undefined) solver.add(utxo.script.eq(spec.script));
+  if (spec.category !== undefined) solver.add(utxo.category.eq(spec.category));
+  if (spec.capability !== undefined) solver.add(utxo.capability.eq(spec.capability));
+  if (spec.fts !== undefined) solver.add(utxo.fts.eq(spec.fts));
+  if (spec.value !== undefined) solver.add(utxo.value.eq(spec.value));
+  if (spec.commitment !== undefined) solver.add(utxo.commitment.eq(spec.commitment));
 }
 
 /** A loan input: paryon mutable NFT (no fungible) on the loan script. */
-export function loanInput(s: Z3Solver, u: Utxo): void {
-  pin(s, u, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.LOAN, fts: 0 });
+export function loanInput(solver: Z3Solver, utxo: Utxo): void {
+  pin(solver, utxo, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.LOAN, fts: 0 });
 }
 
-/** A loan function NFT input: paryon immutable on the function's script, carrying its commitment id. */
-export function functionNftInput(s: Z3Solver, u: Utxo, scriptId: number, commitment?: number): void {
-  pin(s, u, { category: CAT.PARYON, capability: Capability.IMMUTABLE, script: scriptId, fts: 0, commitment });
+/** A loan function NFT input: paryon immutable on the function'solver script, carrying its commitment id. */
+export function functionNftInput(solver: Z3Solver, utxo: Utxo, scriptId: number, commitment?: number): void {
+  pin(solver, utxo, { category: CAT.PARYON, capability: Capability.IMMUTABLE, script: scriptId, fts: 0, commitment });
 }
 
 /** A loan token sidecar input: a (user-facing) loanKey immutable NFT on the sidecar script. */
-export function loanSidecarInput(s: Z3Solver, u: Utxo, categoryId: number = CAT.LOANKEY): void {
-  pin(s, u, { category: categoryId, capability: Capability.IMMUTABLE, script: SCRIPT.LOAN_SIDECAR, fts: 0 });
+export function loanSidecarInput(solver: Z3Solver, utxo: Utxo, categoryId: number = CAT.LOANKEY): void {
+  pin(solver, utxo, { category: categoryId, capability: Capability.IMMUTABLE, script: SCRIPT.LOAN_SIDECAR, fts: 0 });
 }

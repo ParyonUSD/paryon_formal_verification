@@ -14,14 +14,14 @@ import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const files = readdirSync('tests')
-  .filter((f) => f.endsWith('.test.ts'))
+  .filter((entry) => entry.endsWith('.test.ts'))
   .sort()
-  .map((f) => `tests/${f}`);
+  .map((entry) => `tests/${entry}`);
 
 let failed = false;
 for (const file of files) {
   console.log(`\n=== ${file} ===`);
-  const res = spawnSync('pnpm', ['exec', 'vitest', 'run', file], { stdio: 'inherit', shell: true });
-  if (res.status !== 0) failed = true;
+  const result = spawnSync('pnpm', ['exec', 'vitest', 'run', file], { stdio: 'inherit', shell: true });
+  if (result.status !== 0) failed = true;
 }
 process.exit(failed ? 1 : 0);

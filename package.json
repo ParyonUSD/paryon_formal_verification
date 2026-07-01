@@ -1,24 +1,17 @@
 {
-  "name": "z3-solver-ts",
+  "name": "paryon_formal_verification",
   "version": "1.0.0",
-  "description": "Bounded model checking of ParyonUSD CashScript contracts for NFT-capability leaks, using Z3.",
+  "description": "Formal proof that the ParyonUSD CashScript contracts cannot leak a privileged NFT capability, by bounded model checking over the compiled artifacts.",
+  "private": true,
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "check": "tsc --noEmit && eslint .",
-    "test": "node run-tests.mjs",
+    "test": "tsx run-tests.ts",
     "test:watch": "vitest"
   },
-  "keywords": [
-    "bitcoin-cash",
-    "cashscript",
-    "cashtokens",
-    "z3",
-    "smt",
-    "formal-verification"
-  ],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.12.2",
@@ -33,6 +26,7 @@
     "@types/node": "^26.0.1",
     "eslint": "^9.39.4",
     "globals": "^17.7.0",
+    "tsx": "^4.20.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.1",
     "vitest": "^4.1.9"
