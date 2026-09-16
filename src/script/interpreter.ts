@@ -210,9 +210,12 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
           const isIf = op === Op.OP_IF;
           const { elseStart, endIp } = scanBranch(script, i);
           const condT = cond.k === 'bool' ? truth(cond) : { e: null, lossy: false };
+          // Only predicate SVals have a meaningful identity: `ARG`/`OPAQUE` are shared singletons, so two
+          // unrelated branches on opaque values must not be correlated (that would prune reachable paths).
+          const correlatable = cond.k === 'bool';
           const go = (condValue: boolean): void => {
             const branchDecided = new Map(decided);
-            branchDecided.set(cond, condValue);
+            if (correlatable) branchDecided.set(cond, condValue);
             const c2 = cons.slice();
             // When the condition is a real predicate (e.g. an output-count compare), assert it on the
             // taken path so the path is consistent with the branch. A lossy predicate is asserted only
@@ -224,7 +227,7 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
           };
           if (cond.k === 'bytes') go(bytesToNum(cond.v) !== 0); // concrete (e.g. seeded selector) — one branch
           else {
-            const known = decided.get(cond);
+            const known = correlatable ? decided.get(cond) : undefined;
             if (known !== undefined) go(known); // already decided upstream — stay consistent
             else { go(true); go(false); }
           }

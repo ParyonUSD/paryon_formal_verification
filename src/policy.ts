@@ -21,8 +21,9 @@ export interface OwnershipRule {
  * The capability-leak policy.
  *
  * `internalAuthorityCategories` are the categories whose *mutable or minting*
- * capability must never escape the system — in ParyonUSD these are the five
- * deploy categories (paryon, pool, redeemer, loanKeyFactory, oracleMigrationKey).
+ * capability must never escape the system — in ParyonUSD these are four of the five
+ * deploy categories (paryon, pool, redeemer, loanKeyFactory); the fifth, the oracle
+ * migration key, is an admin trust assumption outside the proof (see README).
  *
  * The policy is per-(category, capability), NOT a blanket "no NFT escapes":
  *  - mutable/minting of an internal category  -> only covenant or BURN scripts
