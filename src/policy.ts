@@ -49,6 +49,41 @@ export interface LeakPolicy {
    * Optional; templates without it check the capability leak only.
    */
   functionNfts?: FunctionNftRule[];
+  /**
+   * The sidecar pairs: covenant UTXOs that are always created next to a companion UTXO, and
+   * authenticate that companion by outpoint adjacency alone (`Loan.interact` and
+   * `StabilityPool.interact` require `inputs[i+1]` to come from the same transaction one output
+   * later, and never check its locking script). The pair is therefore part of the system invariant,
+   * exactly like ownership: assumed on inputs, and discharged on outputs by
+   * {@link adjacencyWitness}. Optional; a template that pins its sidecar by hand does not need it.
+   */
+  adjacency?: AdjacencyRule[];
+}
+
+/**
+ * "A UTXO of this (category, capability) on this script always has a companion on `companionScript`
+ * at the next output index of the transaction that created it."
+ *
+ * This is what the per-transaction templates wrote down by hand when they pinned input 1 to the loan
+ * sidecar. Without it the model lets an attacker put anything at the adjacent outpoint, which passes
+ * the covenant's adjacency check while its sidecar covenant does not run — and the sidecar's output
+ * pin goes missing. It is a genuine inductive invariant of the deployment, not a scoping pin, which is
+ * why it comes with its own obligation on the outputs.
+ */
+export interface AdjacencyRule {
+  category: number;
+  /** MUTABLE or MINTING: the capability that makes this UTXO the covenant's state holder. */
+  capability: number;
+  script: number;
+  companionScript: number;
+}
+
+/** True when a UTXO is the state holder of an adjacency rule. */
+function matchesAdjacency(z3: Z3, utxo: Utxo, rule: AdjacencyRule): Bool {
+  return z3.And(
+    utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(rule.capability),
+    utxo.script.eq(rule.script),
+  );
 }
 
 /** A class of function NFTs: this category, immutable, this commitment length, only on these scripts. */
@@ -104,7 +139,38 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
     // Function-NFT authenticity: anything of that shape sits on a function script.
     ...tx.inputs.flatMap((utxo) => (policy.functionNfts ?? []).map((rule) =>
       z3.Implies(hasFunctionNftShape(z3, utxo, rule), onScripts(z3, utxo, rule.scripts)))),
+    // Sidecar adjacency: the UTXO one output later than a covenant's state holder is its companion.
+    // The covenants authenticate that companion by outpoint alone, so this is the half of the
+    // authentication the bytecode does not carry; `adjacencyWitness` discharges it on the outputs.
+    ...tx.inputs.flatMap((utxo, i) => (policy.adjacency ?? []).flatMap((rule) =>
+      tx.inputs.flatMap((other, j) => (i === j ? [] : [z3.Implies(
+        z3.And(
+          matchesAdjacency(z3, utxo, rule), other.present,
+          other.outpointTx.eq(utxo.outpointTx), other.outpointIndex.eq(utxo.outpointIndex.add(1)),
+        ),
+        other.script.eq(rule.companionScript),
+      )])))),
   );
+}
+
+/**
+ * The adjacency witness: satisfiable exactly when some output is a covenant's state holder and the
+ * output that would become its companion — the next index — is absent or on the wrong script. That is
+ * the preservation obligation for {@link AdjacencyRule}: a transaction that creates a loan or a pool
+ * must create its sidecar right after it, or the next transaction to spend it could put anything at
+ * that outpoint and the sidecar's covenant would never run.
+ */
+export function adjacencyWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  const rules = policy.adjacency ?? [];
+  return any(z3, tx.outputs.flatMap((out, j) => rules.map((rule) => {
+    const next = tx.outputs[j + 1];
+    // At the last slot the companion has nowhere to go: within this bound the obligation fails, which
+    // is reported rather than hidden (a wider capacity is the fix if a real transaction needs it).
+    const companion = next === undefined
+      ? z3.Bool.val(false)
+      : z3.And(next.present, next.script.eq(rule.companionScript));
+    return z3.And(matchesAdjacency(z3, out, rule), z3.Not(companion));
+  })));
 }
 
 /**

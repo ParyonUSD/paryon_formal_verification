@@ -1,5 +1,5 @@
 import { Capability, type Utxo } from '../model.js';
-import { type FunctionNftRule, type LeakPolicy, type OwnershipRule } from '../policy.js';
+import { type AdjacencyRule, type FunctionNftRule, type LeakPolicy, type OwnershipRule } from '../policy.js';
 import type { Num, Z3Solver } from '../z3.js';
 import { CAT, SCRIPT } from './ids.js';
 
@@ -75,6 +75,26 @@ export const FUNCTION_NFTS: FunctionNftRule[] = [
 ];
 
 /**
+ * The sidecar pairs. `Loan.interact`, `StabilityPool.interact` and `RedemptionSidecar.attach`
+ * authenticate their companion UTXO by outpoint adjacency alone — same source transaction, next
+ * output index — and never by locking script. So "the UTXO one index after a loan / pool / redemption
+ * is its sidecar" is part of the system invariant, and it is the assumption every template made when
+ * it pinned input 1 to the sidecar script. Assumed on inputs, discharged on outputs by
+ * `adjacencyWitness`.
+ */
+export const SIDECAR_PAIRS: AdjacencyRule[] = [
+  { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.LOAN, companionScript: SCRIPT.LOAN_SIDECAR },
+  {
+    category: CAT.POOL, capability: Capability.MINTING, script: SCRIPT.STABILITY_POOL,
+    companionScript: SCRIPT.POOL_SIDECAR,
+  },
+  {
+    category: CAT.REDEEMER, capability: Capability.MUTABLE, script: SCRIPT.REDEMPTION,
+    companionScript: SCRIPT.REDEMPTION_SIDECAR,
+  },
+];
+
+/**
  * A loan leak policy over the three internal authorities. `ownership` lists the
  * privileged-capability owners actually present in this template — omitting a
  * (category, capability) means it cannot legitimately appear on any input, which
@@ -135,6 +155,7 @@ export const SYSTEM_POLICY: LeakPolicy = {
     OWN.loanKeyFactoryMinting,
   ],
   functionNfts: FUNCTION_NFTS,
+  adjacency: SIDECAR_PAIRS,
 };
 
 export interface UtxoSpec {

@@ -45,7 +45,7 @@ export interface Generated {
   lockingScript: ScriptOps;
 }
 
-type Kind = 'cat' | 'bc' | 'commit' | 'num' | 'outpoint';
+type Kind = 'cat' | 'bc' | 'commit' | 'num' | 'outpoint' | 'capsuffix';
 
 // Stack effect of the plain stack opcodes we emit.
 const DELTA: Partial<Record<number, number>> = {
@@ -159,6 +159,39 @@ export function generateScript(cfg: GenConfig): Generated {
     const i = inIdx();
     if (i === cfg.activeIndex && rng.bool(0.3)) emit(Op.OP_INPUTINDEX, 1); else pushNum(i);
     emit(Op.OP_OUTPOINTTXHASH, 0);
+  };
+
+  // Slots that actually carry a token: `tokenCategory.split(32)` is a split past the end (a VM error)
+  // on a slot without one, so exact mode only takes the capability suffix of these.
+  const tokenSlots = (side: 'in' | 'out'): number[] => {
+    const slots = side === 'in' ? ctx.inputs : ctx.outputs;
+    return slots.flatMap((slot, i) => (slot.category !== NO_CATEGORY ? [i] : []));
+  };
+  const hasTokenSlot = (): boolean => !exact || tokenSlots('in').length + tokenSlots('out').length > 0;
+
+  /**
+   * The capability suffix `tokenCategory.split(32)[1]`: the empty string for a bare category, 0x01 for
+   * mutable, 0x02 for minting. The model decides it exactly (it is the suffix class), and
+   * `Borrowing.borrow` authenticates its prepared loanKey with it.
+   */
+  const capSuffixOperand = (): void => {
+    const side = rng.bool() ? 'in' : 'out';
+    const candidates = exact ? tokenSlots(side) : [];
+    const i = exact
+      ? (candidates.length > 0 ? rng.pick(candidates) : rng.pick(tokenSlots(side === 'in' ? 'out' : 'in')))
+      : (side === 'in' ? inIdx() : outIdx());
+    const useOut = exact && candidates.length === 0 ? side === 'in' : side === 'out';
+    pushNum(i);
+    emit(useOut ? Op.OP_OUTPUTTOKENCATEGORY : Op.OP_UTXOTOKENCATEGORY, 0);
+    pushNum(32); emit(Op.OP_SPLIT, 0); emit(Op.OP_NIP);
+  };
+  /** A constant the capability suffix is compared against (`0x`, `0x01`, `0x02`, or a non-suffix). */
+  const capSuffixConst = (): void => {
+    const r = rng.next();
+    if (r < 0.35) { emit(Op.OP_0, 1); return; }
+    if (r < 0.65) { pushData(Uint8Array.of(Capability.MUTABLE)); return; }
+    if (r < 0.95) { pushData(Uint8Array.of(Capability.MINTING)); return; }
+    pushData(Uint8Array.of(3 + rng.int(200))); // the suffix of no tokenCategory: always false
   };
 
   const commitOperand = (forceField = false): void => {
@@ -308,11 +341,14 @@ export function generateScript(cfg: GenConfig): Generated {
       // Two constant commitments compare to nothing in the model (only fields carry a commitment), so exact
       // mode keeps a field on one side; categories and bytecode constants are modelled, so they need no such care.
       const operand = kind === 'cat' ? catOperand : kind === 'bc' ? bcOperand
-        : kind === 'outpoint' ? outpointOperand : () => commitOperand(exact);
+        : kind === 'outpoint' ? outpointOperand : kind === 'capsuffix' ? capSuffixOperand
+          : () => commitOperand(exact);
       const other = wide(0.15)
         // mismatched kinds: opaque to the model
         ? rng.pick([catOperand, bcOperand, outpointOperand, () => commitOperand(), junk])
-        : (kind === 'commit' ? () => commitOperand() : operand);
+        : kind === 'commit' ? () => commitOperand()
+          : kind === 'capsuffix' ? (rng.bool(0.7) ? capSuffixConst : capSuffixOperand)
+            : operand;
       const [a, b] = rng.bool() ? [operand, other] : [other, operand];
       pattern.arrange(a, b);
       if (verify && rng.bool()) emit(Op.OP_EQUALVERIFY, -2);
@@ -354,10 +390,12 @@ export function generateScript(cfg: GenConfig): Generated {
       junk(); emit(Op.OP_EQUAL, -1);
       return false;
     }
-    // Outpoint and category identities are exact under negation too; script ids and commitments are not.
+    // Outpoint, category and capability-suffix identities are exact under negation too; script ids
+    // and commitments are not.
+    const suffix: Kind[] = hasTokenSlot() ? ['capsuffix'] : [];
     const kinds: Kind[] = exact && !positive
-      ? ['cat', 'cat', 'num', 'outpoint']
-      : ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint'];
+      ? ['cat', 'cat', 'num', 'outpoint', ...suffix]
+      : ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint', ...suffix];
     return compare(rng.pick(kinds), false);
   };
 
@@ -384,7 +422,12 @@ export function generateScript(cfg: GenConfig): Generated {
       emit(Op.OP_VERIFY, -1);
       return;
     }
-    if (r < 0.7) { compare(rng.pick<Kind>(['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint']), true); return; }
+    if (r < 0.7) {
+      const kinds: Kind[] = ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint'];
+      if (hasTokenSlot()) kinds.push('capsuffix');
+      compare(rng.pick(kinds), true);
+      return;
+    }
     boolExpr(2); emit(Op.OP_VERIFY, -1);
   };
   const block = (depth: number): void => { const n = 1 + rng.int(2); for (let k = 0; k < n; k++) statement(depth); };

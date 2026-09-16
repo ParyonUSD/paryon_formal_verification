@@ -42,6 +42,8 @@ const APPEND_CLASS: Record<number, Record<number, number>> = {
 // Commitment constants longer than this are not read as an integer (the model's commitment abstraction
 // only ever needs the single-byte function identifiers; longer constants fall outside exact-int range).
 const MAX_COMMITMENT_CONST_BYTES = 6;
+/** `constSuffixClass`: the constant is the capability suffix of no tokenCategory at all. */
+const NO_SUFFIX = -1;
 
 /**
  * The result of a modelled equality. `e` is null when the compare cannot move a capability. `lossy`
@@ -137,6 +139,30 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   }
 
   const eqCategory = (x: CatView, y: CatView): Bool => z3.And(eqInt(x.catId, y.catId), eqInt(x.cls, y.cls));
+
+  // ---- capability suffix ----
+  // `tokenCategory.split(32)[1]` is the other half of the introspection string: the empty string for a
+  // bare category (an immutable NFT or a fungible-only UTXO), 0x01 for mutable, 0x02 for minting —
+  // exactly the suffix classes 1, 2 and 3. `Borrowing.borrow` authenticates its prepared loanKey this
+  // way (`require(loanKeyCapability == 0x02)`), so dropping it let a *non-minting* NFT pass as the
+  // loanKey and the borrow outputs then carried the wrong category. Only a raw introspection field is
+  // handled, whose class is 1..3 whenever the split succeeds at all, which makes this exact rather
+  // than lossy: a category-less field (class 0) is a split past the end, which the VM rejects and this
+  // equality reports false.
+  const capSuffixClass = (v: SVal): Num | null => {
+    if (v.k !== 'split' || v.at !== 32 || v.side !== 'R' || v.v.k !== 'field') return null;
+    if (v.v.f === 'utxoCat') return catClass(v.v.i, 'in');
+    if (v.v.f === 'outCat') return catClass(v.v.i, 'out');
+    return null;
+  };
+  /** The suffix class a constant is the suffix of: `0x` -> bare, `0x01` -> mutable, `0x02` -> minting. */
+  const constSuffixClass = (v: SVal): number | null => {
+    if (v.k !== 'bytes') return null;
+    if (v.v.length === 0) return 1;
+    if (v.v.length === 1 && v.v[0] === Capability.MUTABLE) return 2;
+    if (v.v.length === 1 && v.v[0] === Capability.MINTING) return 3;
+    return NO_SUFFIX; // any other string is the suffix of no tokenCategory
+  };
 
   // ---- locking-bytecode interpretation ----
   type ScriptView = { kind: 'in' | 'out'; i: number } | { kind: 'const'; id: number };
@@ -242,6 +268,14 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   }
 
   function equalConstraint(a: SVal, b: SVal): EqualityResult {
+    const suffixA = capSuffixClass(a), suffixB = capSuffixClass(b);
+    if (suffixA !== null || suffixB !== null) {
+      if (suffixA !== null && suffixB !== null) return exact(suffixA.eq(suffixB));
+      const known = (suffixA ?? suffixB)!;
+      const constant = constSuffixClass(suffixA !== null ? b : a);
+      if (constant === null) return NONE;
+      return exact(constant === NO_SUFFIX ? z3.Bool.val(false) : known.eq(constant));
+    }
     // Outpoint txid identity: `tx.inputs[i].outpointTransactionHash == tx.inputs[j].outpointTransactionHash`,
     // the adjacency check `Loan.interact` / `LoanTokenSidecar.attach` authenticate their partner with.
     // Exact, not lossy: `outpointTx` is a per-input identity variable, so two inputs' hashes are equal

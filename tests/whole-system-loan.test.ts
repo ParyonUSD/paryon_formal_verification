@@ -2,7 +2,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { Capability } from '../src/model.js';
 import { CAT, LOAN_CATEGORIES, SCRIPT, SYSTEM_POLICY } from '../src/covenants/common.js';
 import { LOAN_SUBSYSTEM_REGISTRY, unmodelledCovenantScripts } from '../src/covenants/registry.js';
-import { forgedFunctionNftWitness, leakWitness, preservationWitness } from '../src/policy.js';
+import {
+  adjacencyWitness, forgedFunctionNftWitness, leakWitness, preservationWitness,
+} from '../src/policy.js';
 import { buildWholeSystem, type BuiltWholeSystem } from '../src/script/wholeSystem.js';
 import { any, getContext, type Z3 } from '../src/z3.js';
 import { decideWhole } from './wholeSystemReport.js';
@@ -115,6 +117,15 @@ describe('whole-system loan subsystem — no transaction template', () => {
 
   it('no function NFT can be forged (authenticity witness unsat)', async () => {
     const { verdict, report } = await decideWhole(built, 'forged', [forgedFunctionNftWitness(z3, built.tx, SYSTEM_POLICY)]);
+    expect(verdict, report).toBe('unsat');
+  });
+
+  it('every loan output keeps its sidecar next to it (adjacency witness unsat)', async () => {
+    // `SYSTEM_POLICY` assumes the sidecar pairs on the inputs — `Loan.interact` authenticates its
+    // sidecar by outpoint adjacency and never by script, which is the fact every template wrote down
+    // by hand when it pinned input 1. An assumption on the inputs is only sound if the transaction
+    // re-establishes it on the outputs, so the build has to discharge it as a fourth witness.
+    const { verdict, report } = await decideWhole(built, 'adjacency', [adjacencyWitness(z3, built.tx, SYSTEM_POLICY)]);
     expect(verdict, report).toBe('unsat');
   });
 });
