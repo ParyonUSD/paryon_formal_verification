@@ -1,5 +1,5 @@
 import { Capability, type Utxo } from '../model.js';
-import { type LeakPolicy, type OwnershipRule } from '../policy.js';
+import { type LeakPolicy, type OwnershipRule, type PreservationRule } from '../policy.js';
 import type { Num, Z3Solver } from '../z3.js';
 import { CAT, SCRIPT } from './ids.js';
 
@@ -57,13 +57,28 @@ export const OWN = {
 } satisfies Record<string, OwnershipRule>;
 
 /**
+ * The function NFTs: immutable NFTs whose presence on their function script is what makes each
+ * covenant operation possible. Every transaction spending one must recreate it in place (checked by
+ * `preservationWitness`); losing one would brick that operation for the whole system.
+ */
+export const FUNCTION_NFTS: PreservationRule[] = [
+  { category: CAT.PARYON, scripts: [
+    SCRIPT.FN_LIQUIDATE, SCRIPT.FN_MANAGE, SCRIPT.FN_REDEEM, SCRIPT.FN_START_REDEMPTION,
+    SCRIPT.FN_SWAP_IN, SCRIPT.FN_SWAP_OUT, SCRIPT.FN_PAY_INTEREST, SCRIPT.FN_CHANGE_INTEREST,
+  ] },
+  { category: CAT.POOL, scripts: [
+    SCRIPT.FN_LIQUIDATELOAN, SCRIPT.FN_ADD_LIQUIDITY, SCRIPT.FN_WITHDRAW, SCRIPT.FN_NEW_PERIOD,
+  ] },
+];
+
+/**
  * A loan leak policy over the three internal authorities. `ownership` lists the
  * privileged-capability owners actually present in this template — omitting a
  * (category, capability) means it cannot legitimately appear on any input, which
  * is exactly how we say "no paryon-minting input exists in a loan transaction".
  */
 export function loanPolicy(ownership: OwnershipRule[]): LeakPolicy {
-  return { internalAuthorityCategories: INTERNAL_CATEGORIES, ownership };
+  return { internalAuthorityCategories: INTERNAL_CATEGORIES, ownership, preserve: FUNCTION_NFTS };
 }
 
 /**

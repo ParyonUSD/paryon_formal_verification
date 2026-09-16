@@ -3,7 +3,7 @@ import { declareTx, type SymbolicTx } from '../model.js';
 import { inputsRespectInvariant, privilegedInputsOnlyAt, type LeakPolicy } from '../policy.js';
 import type { Z3, Z3Solver } from '../z3.js';
 import { asmToScript } from './script.js';
-import { ARG, interpret, seedSelector, type Path, type SVal } from './interpreter.js';
+import { ARG, interpret, seedSelector, type InterpretStats, type Path, type SVal } from './interpreter.js';
 
 /** Minimal shape of a CashScript artifact we consume. */
 export interface Artifact {
@@ -29,6 +29,12 @@ export interface ArtifactConfig {
   /** Category ids the consensus tally is enforced over (the system'solver category universe). */
   categories: number[];
   policy: LeakPolicy;
+  /**
+   * Input indices governed by a covenant in this template: the only inputs that may carry a privileged
+   * (mutable/minting) or preserved (function-NFT) class. The active input of every interpreted covenant
+   * is governed implicitly; list here the ones a `setup` pins but no spec runs (partners dropped in a
+   * "composition matters" control, hand-pinned privileged inputs).
+   */
   designatedInputs: number[];
   /** Template scaffolding: input categories/capabilities/scripts, partner covenants, id bindings. */
   setup: (z3: Z3, solver: Z3Solver, tx: SymbolicTx) => void;
@@ -39,6 +45,12 @@ export interface BuiltArtifact {
   policy: LeakPolicy;
   /** One solver per reachable combination of script paths, each fully loaded. */
   solvers: Z3Solver[];
+  /**
+   * Inputs governed by a covenant this template runs (designated + every interpreted covenant's
+   * active input). The preservation query restricts preserved-class NFTs to these; the leak query
+   * needs no such restriction and stays cheaper without it.
+   */
+  governedInputs: number[];
 }
 
 function cartesian<T>(lists: T[][]): T[][] {
@@ -54,6 +66,7 @@ function cartesian<T>(lists: T[][]): T[][] {
  */
 export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactConfig): BuiltArtifact {
   const tx = declareTx(z3, cfg.nInputs, cfg.nOutputs);
+  const stats: InterpretStats = { maxOutputIndex: -1 };
 
   const perCovenantPaths: Path[][] = specs.map((spec) => {
     const script = asmToScript(spec.artifact.bytecode);
@@ -68,10 +81,24 @@ export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactCo
       ...(multiFunction ? [seedSelector(abiIndex)] : []),
       ...(spec.seeds ?? []).slice().reverse(),
     ];
-    return interpret(z3, tx, script, { activeIndex: spec.activeIndex, initialStack });
+    return interpret(z3, tx, script, { activeIndex: spec.activeIndex, initialStack, stats });
   });
 
+  // A leak needs an output slot no covenant pins. If the template's capacity ends exactly at the highest
+  // index the covenants touch, the attacker's extra output has nowhere to go and the check is vacuous:
+  // UNSAT because the template is too small, not because the contracts are safe. Demand a free slot.
+  // (Explicit output-count caps in the bytecode then make that slot absent, which is the real constraint.)
+  if (cfg.nOutputs < stats.maxOutputIndex + 2) {
+    throw new Error(
+      `template has ${cfg.nOutputs} output slots but a covenant references output ${stats.maxOutputIndex}; `
+      + `allow at least ${stats.maxOutputIndex + 2} so an unpinned output can exist`,
+    );
+  }
+
   const combos = cartesian(perCovenantPaths);
+  // Inputs governed by a covenant this template runs: the designated privileged inputs plus the active
+  // input of every interpreted covenant (the function NFTs sit there).
+  const governed = [...new Set([...cfg.designatedInputs, ...specs.map((spec) => spec.activeIndex)])];
   const solvers = combos.map((combo) => {
     const solver = new z3.Solver();
     addConsensusRules(z3, solver, tx, cfg.categories);
@@ -82,5 +109,5 @@ export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactCo
     return solver;
   });
 
-  return { tx, policy: cfg.policy, solvers };
+  return { tx, policy: cfg.policy, solvers, governedInputs: governed };
 }

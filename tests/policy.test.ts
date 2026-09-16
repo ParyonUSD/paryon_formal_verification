@@ -2,8 +2,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { compose, type Covenant } from './covenant.js';
 import { addConsensusRules } from '../src/consensus.js';
 import { Capability, Script, declareTx } from '../src/model.js';
-import { leakWitness } from '../src/policy.js';
-import { getContext, type Z3 } from '../src/z3.js';
+import { leakWitness, preservationWitness } from '../src/policy.js';
+import { getContext, type Z3, type Z3Solver } from '../src/z3.js';
 
 const PARYON = 1;
 const LOAN_SCRIPT = Script.FIRST_COVENANT; // id 2
@@ -19,13 +19,13 @@ beforeAll(async () => {
  *  - leakyLoan omits that output check (the classic missing-output bug).
  * Both spend a mutable PARYON loan NFT at input 0.
  */
-function setup(z3: Z3, nOut: number) {
+function setup(z3: Z3, nOut: number, withSecondInput = false) {
   const s = new z3.Solver();
   const tx = declareTx(z3, 2, nOut);
   addConsensusRules(z3, s, tx, [PARYON]);
   // Input 0: the loan, a mutable PARYON NFT controlled by the loan covenant.
   s.add(tx.inputs[0]!.present, tx.inputs[0]!.category.eq(PARYON), tx.inputs[0]!.capability.eq(Capability.MUTABLE), tx.inputs[0]!.script.eq(LOAN_SCRIPT));
-  s.add(z3.Not(tx.inputs[1]!.present));
+  if (!withSecondInput) s.add(z3.Not(tx.inputs[1]!.present));
   return { s, tx };
 }
 
@@ -64,6 +64,26 @@ describe('capability-leak policy', () => {
     s.add(tx.outputs[0]!.present, tx.outputs[0]!.category.eq(PARYON), tx.outputs[0]!.capability.eq(Capability.MUTABLE), tx.outputs[0]!.script.eq(LOAN_SCRIPT + 1));
     s.add(leakWitness(z3, tx, policy));
     expect(await s.check()).toBe('sat');
+  });
+
+  it('preservation: a spent function NFT that is not recreated in place is caught (sat), recreated is fine (unsat)', async () => {
+    const FN_SCRIPT = LOAN_SCRIPT + 1;
+    const withRules = { ...policy, preserve: [{ category: PARYON, scripts: [FN_SCRIPT] }] };
+    const fnInput = (s: Z3Solver, tx: ReturnType<typeof declareTx>) =>
+      s.add(tx.inputs[1]!.present, tx.inputs[1]!.category.eq(PARYON), tx.inputs[1]!.capability.eq(Capability.IMMUTABLE), tx.inputs[1]!.script.eq(FN_SCRIPT), tx.inputs[1]!.commitment.eq(2));
+    // Not recreated: only the loan output is pinned.
+    let { s, tx } = setup(z3, 3, true);
+    fnInput(s, tx);
+    compose(z3, s, tx, [safeLoan]);
+    s.add(preservationWitness(z3, tx, withRules));
+    expect(await s.check()).toBe('sat');
+    // Recreated in place with the same commitment.
+    ({ s, tx } = setup(z3, 3, true));
+    fnInput(s, tx);
+    compose(z3, s, tx, [safeLoan]);
+    s.add(tx.outputs[1]!.present, tx.outputs[1]!.category.eq(PARYON), tx.outputs[1]!.capability.eq(Capability.IMMUTABLE), tx.outputs[1]!.script.eq(FN_SCRIPT), tx.outputs[1]!.commitment.eq(2));
+    s.add(preservationWitness(z3, tx, withRules));
+    expect(await s.check()).toBe('unsat');
   });
 
   it('burning the loan NFT to OP_RETURN is also leak-free (unsat)', async () => {

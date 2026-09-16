@@ -10,6 +10,10 @@ For every internal-authority category (the five ParyonUSD deploy categories), no
 
 We check it per transaction template: assert `consensus ∧ covenants ∧ leak` and expect `unsat`. A `sat` result is a concrete counterexample transaction. The witness is invariant preservation, not merely "no attacker output": the inputs are assumed to satisfy the ownership invariant (every privileged NFT sits on its owning covenant), so the outputs are required to satisfy the same invariant, which is what lets the single-transaction result lift to "the attacker can never come to hold such a capability" by induction over the covenant lifetime (deploy state is the base case). A privileged NFT parked on the wrong covenant would count as a leak: that covenant's code does not protect it. The per-template ownership list is therefore a reviewed specification of where each capability may legitimately go.
 
+A second, liveness-flavoured witness rides on the same machinery: every *function NFT* (the immutable NFTs whose presence on their function script makes each covenant operation possible) that a transaction spends must be recreated in place, with the same category, script and commitment. Losing one is not a leak but bricks that operation for everyone. `FUNCTION_NFTS` in `src/covenants/common.ts` lists them; `expectArtifactSafe` checks both witnesses on every path.
+
+Two guards keep templates honest. The builder refuses a template whose output capacity ends exactly at the highest output index a covenant touches, since a leak needs an unpinned slot and a too-small template would prove nothing. And `tests/coverage.test.ts` is a ledger of every function of every published artifact: each is either verified by a named template or excluded with a reason, so a new or forgotten function fails the suite.
+
 ## Trust chain
 
 This repo proves the inductive step over the compiled `@paryonusd/contracts` artifacts: no transaction satisfying the covenants can move a privileged capability off its rightful covenant. It assumes a clean base case, namely that every privileged mutable/minting NFT already sits on its owning covenant (the `inputsRespectInvariant` ownership hypothesis).

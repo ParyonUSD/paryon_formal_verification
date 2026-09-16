@@ -36,6 +36,19 @@ export interface OwnershipRule {
 export interface LeakPolicy {
   internalAuthorityCategories: number[];
   ownership: OwnershipRule[];
+  /**
+   * Immutable NFTs that must be recreated in place (same category, capability, script and commitment)
+   * whenever one is spent: the function NFTs that make each covenant operation *possible*. Losing one
+   * is not a capability leak but bricks that function, so it is checked as a separate (liveness)
+   * witness, see {@link preservationWitness}. Optional; templates without it check leaks only.
+   */
+  preserve?: PreservationRule[];
+}
+
+/** An immutable-NFT class that must survive every transaction spending it. */
+export interface PreservationRule {
+  category: number;
+  scripts: number[];
 }
 
 /** True when a UTXO carries an internal-authority category with mutable/minting capability. */
@@ -97,6 +110,44 @@ export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolic
       allowed.includes(i) ? z3.Bool.val(true) : z3.Not(isInternalPrivileged(z3, utxo, policy)),
     ),
   );
+}
+
+/**
+ * The preservation counterpart of {@link privilegedInputsOnlyAt}: an immutable NFT of a preserved class
+ * sits on a covenant script, so spending it means running that covenant, which recreates it (that is
+ * what its own template proves). In a template that does not run it, such an input cannot occur; without
+ * this restriction the solver adds an ungoverned function NFT as an extra input and reports it lost.
+ * `governed` is every input index whose covenant this template interprets or designates.
+ */
+export function preservedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy, governed: number[]): Bool {
+  const rules = policy.preserve ?? [];
+  return z3.And(
+    ...tx.inputs.map((utxo, i) =>
+      governed.includes(i) ? z3.Bool.val(true) : z3.Not(any(z3, rules.map((rule) => z3.And(
+        utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
+        any(z3, rule.scripts.map((sc) => utxo.script.eq(sc))),
+      ))))),
+  );
+}
+
+/**
+ * The preservation witness: satisfiable exactly when some input matches a preservation rule (an
+ * immutable NFT of that category on one of its scripts) and no output recreates it — same category,
+ * still immutable, same script, same commitment. Assert alongside consensus + covenants, expect UNSAT.
+ */
+export function preservationWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  const rules = policy.preserve ?? [];
+  return any(z3, tx.inputs.flatMap((input) => rules.map((rule) => {
+    const matches = z3.And(
+      input.present, input.category.eq(rule.category), input.capability.eq(Capability.IMMUTABLE),
+      any(z3, rule.scripts.map((sc) => input.script.eq(sc))),
+    );
+    const recreated = any(z3, tx.outputs.map((out) => z3.And(
+      out.present, out.category.eq(rule.category), out.capability.eq(Capability.IMMUTABLE),
+      out.script.eq(input.script), out.commitment.eq(input.commitment),
+    )));
+    return z3.And(matches, z3.Not(recreated));
+  })));
 }
 
 /**

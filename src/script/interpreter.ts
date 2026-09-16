@@ -35,6 +35,14 @@ export interface InterpretOptions {
   initialStack: SVal[];
   /** Safety valve against pathological branch counts. */
   maxPaths?: number;
+  /** Filled in with what the script touched (see {@link InterpretStats}). */
+  stats?: InterpretStats;
+}
+
+/** What a script referenced, for template-capacity checks in fromArtifact. */
+export interface InterpretStats {
+  /** Highest output index any introspection opcode read on any path, or -1. */
+  maxOutputIndex: number;
 }
 
 export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: InterpretOptions): Path[] {
@@ -45,6 +53,11 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
     if (v.k === 'bytes') return bytesToNum(v.v);
     if (v.k === 'num' && v.e === null) throw new Error('symbolic index unsupported');
     throw new Error(`cannot resolve index from ${v.k}`);
+  }
+  function outIndex(v: SVal): number {
+    const i = toIndex(v);
+    if (opts.stats && i > opts.stats.maxOutputIndex) opts.stats.maxOutputIndex = i;
+    return i;
   }
 
   /**
@@ -89,15 +102,15 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
 
         // introspection (index on stack)
         case Op.OP_UTXOTOKENCATEGORY: push({ k: 'field', f: 'utxoCat', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENCATEGORY: push({ k: 'field', f: 'outCat', i: toIndex(pop()) }); break;
+        case Op.OP_OUTPUTTOKENCATEGORY: push({ k: 'field', f: 'outCat', i: outIndex(pop()) }); break;
         case Op.OP_UTXOTOKENCOMMITMENT: push({ k: 'field', f: 'utxoCommit', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENCOMMITMENT: push({ k: 'field', f: 'outCommit', i: toIndex(pop()) }); break;
+        case Op.OP_OUTPUTTOKENCOMMITMENT: push({ k: 'field', f: 'outCommit', i: outIndex(pop()) }); break;
         case Op.OP_UTXOBYTECODE: push({ k: 'field', f: 'utxoBytecode', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTBYTECODE: push({ k: 'field', f: 'outBytecode', i: toIndex(pop()) }); break;
+        case Op.OP_OUTPUTBYTECODE: push({ k: 'field', f: 'outBytecode', i: outIndex(pop()) }); break;
         case Op.OP_UTXOVALUE: push({ k: 'field', f: 'utxoValue', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTVALUE: push({ k: 'field', f: 'outValue', i: toIndex(pop()) }); break;
+        case Op.OP_OUTPUTVALUE: push({ k: 'field', f: 'outValue', i: outIndex(pop()) }); break;
         case Op.OP_UTXOTOKENAMOUNT: push({ k: 'field', f: 'utxoAmount', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENAMOUNT: push({ k: 'field', f: 'outAmount', i: toIndex(pop()) }); break;
+        case Op.OP_OUTPUTTOKENAMOUNT: push({ k: 'field', f: 'outAmount', i: outIndex(pop()) }); break;
         case Op.OP_ACTIVEBYTECODE: push({ k: 'activeBytecode' }); break;
         case Op.OP_INPUTINDEX: push(constBytes(numToBytes(opts.activeIndex))); break;
         case Op.OP_TXINPUTCOUNT: push({ k: 'count', of: 'in' }); break;

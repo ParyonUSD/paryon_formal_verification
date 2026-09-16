@@ -21,6 +21,9 @@ The model captures exactly what governs capability movement:
 - satoshi **values** and fungible **amounts** where a contract *compares* them (`tokenAmount == 0`,
   `value == 1000`, `out.value >= in.value`): exact model integers, arithmetic on them stays opaque.
 
+Alongside the leak witness, a **function-NFT preservation** witness (liveness): an immutable
+function NFT spent by a transaction must be recreated on its script with its commitment.
+
 ## What is NOT checked (and why that's sound)
 
 These are out of scope and the model asserts nothing about them:

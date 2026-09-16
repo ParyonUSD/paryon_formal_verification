@@ -110,6 +110,17 @@ capability effect): `RedemptionSidecar.attach`, `LoanKeyOriginEnforcer.enforce` 
   a known limitation to lift later.
 - Enum ids (`category`, `script`) are bounded (`MAX_CATEGORY`/`MAX_SCRIPT`) so the solver searches a
   finite domain; the attacker can still pick any in-range value, so bounds hide no leak.
+- **Output capacity** (`nOutputs`): a leak needs an output slot no covenant pins. `buildFromArtifact`
+  refuses a template unless there is at least one slot above the highest output index any covenant
+  reads; four templates were exactly at the limit when this guard was added (all still prove).
+- **Governed inputs and preservation**: the function-NFT preservation witness only makes sense for
+  inputs whose covenant runs in the template (an ungoverned function NFT could only be spent by
+  running its own covenant, which its own template proves recreates it), so preserved-class NFTs are
+  restricted to the interpreted covenants' active inputs plus `designatedInputs`, mirroring
+  `privilegedInputsOnlyAt`. Proving preservation also needed two precision fixes: a UTXO without an
+  NFT has an *empty* commitment (structural rule), and `tokenAmount == 0` / `value == 1000` compare
+  model integers exactly — otherwise a function NFT could "recreate" as a fungible-only output of the
+  same category.
 
 ## Next steps
 

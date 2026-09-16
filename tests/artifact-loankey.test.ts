@@ -77,7 +77,7 @@ describe('borrowing + loanKey factory — derived from artifact bytecode', () =>
       // constructor: loanKeyOriginEnforcerLockingScript, loanKeyOriginProofLockingScript
       { artifact: lk.artifactLoanKeyFactory, activeIndex: 1, seeds: [seedScript(SCRIPT.ORIGIN_ENFORCER), seedScript(SCRIPT.ORIGIN_PROOF)] },
     ], {
-      nInputs: 3, nOutputs: 6, categories: LOAN_CATEGORIES, policy: POLICY.loanKeyFactory, designatedInputs: [1],
+      nInputs: 3, nOutputs: 7, categories: LOAN_CATEGORIES, policy: POLICY.loanKeyFactory, designatedInputs: [1],
       setup: (_z3, s, tx) => {
         pin(s, tx.inputs[0]!, { category: NO_CATEGORY }); // vout0 genesis-source UTXO (BCH only)
         pin(s, tx.inputs[1]!, { category: CAT.LOANKEY_FACTORY, capability: Capability.MINTING, script: SCRIPT.LOANKEY_FACTORY });
