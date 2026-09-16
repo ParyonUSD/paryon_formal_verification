@@ -71,17 +71,25 @@ export interface Utxo {
 export interface SymbolicTx {
   inputs: Utxo[];
   outputs: Utxo[];
+  /** This transaction's symbol namespace (see declareTx); auxiliary variables use it too. */
+  prefix: string;
 }
 
-function declareUtxo(z3: Z3, kind: 'in' | 'out', i: number): Utxo {
+// Every declared transaction gets its own symbol namespace. Z3 identifies constants by name, so two
+// builds in one context sharing `in0.category` share the constant and everything the context caches
+// about it; with unique names each build is a fresh problem to the solver.
+let txCounter = 0;
+
+function declareUtxo(z3: Z3, prefix: string, kind: 'in' | 'out', i: number): Utxo {
+  const name = (field: string) => `${prefix}${kind}${i}.${field}`;
   return {
-    value: z3.Int.const(`${kind}${i}.value`),
-    category: z3.Int.const(`${kind}${i}.category`),
-    fts: z3.Int.const(`${kind}${i}.fts`),
-    capability: z3.Int.const(`${kind}${i}.capability`),
-    script: z3.Int.const(`${kind}${i}.script`),
-    commitment: z3.Int.const(`${kind}${i}.commitment`),
-    present: z3.Bool.const(`${kind}${i}.present`),
+    value: z3.Int.const(name('value')),
+    category: z3.Int.const(name('category')),
+    fts: z3.Int.const(name('fts')),
+    capability: z3.Int.const(name('capability')),
+    script: z3.Int.const(name('script')),
+    commitment: z3.Int.const(name('commitment')),
+    present: z3.Bool.const(name('present')),
   };
 }
 
@@ -90,8 +98,10 @@ function declareUtxo(z3: Z3, kind: 'in' | 'out', i: number): Utxo {
  * slots. No constraints are added here; call {@link addConsensusRules} next.
  */
 export function declareTx(z3: Z3, nIn: number, nOut: number): SymbolicTx {
+  const prefix = `t${txCounter++}.`;
   return {
-    inputs: Array.from({ length: nIn }, (_, i) => declareUtxo(z3, 'in', i)),
-    outputs: Array.from({ length: nOut }, (_, i) => declareUtxo(z3, 'out', i)),
+    inputs: Array.from({ length: nIn }, (_, i) => declareUtxo(z3, prefix, 'in', i)),
+    outputs: Array.from({ length: nOut }, (_, i) => declareUtxo(z3, prefix, 'out', i)),
+    prefix,
   };
 }

@@ -12,6 +12,8 @@ We check it per transaction template: assert `consensus ∧ covenants ∧ leak` 
 
 A second, liveness-flavoured witness rides on the same machinery: every *function NFT* (the immutable NFTs whose presence on their function script makes each covenant operation possible) that a transaction spends must be recreated in place, with the same category, script and commitment. Losing one is not a leak but bricks that operation for everyone. `FUNCTION_NFTS` in `src/covenants/common.ts` lists them; `expectArtifactSafe` checks both witnesses on every path.
 
+The artifact proofs are decided by a native Z3 process per query, from SMT-LIB text the bindings emit (`scripts/install-z3.sh` installs the pinned release into `.tools/`; `Z3_SMT_DIR` keeps the `.smt2` files as audit artifacts any SMT solver can re-check). The wasm bindings build the expressions and run the small oracle and unit queries, but they proved unreliable for the larger proofs: their garbage-collection finalizer releases Z3 references while a check runs in a worker thread, which produced hangs and heap corruption that depended on process history.
+
 Two guards keep templates honest. The builder refuses a template whose output capacity ends exactly at the highest output index a covenant touches, since a leak needs an unpinned slot and a too-small template would prove nothing. And `tests/coverage.test.ts` is a ledger of every function of every published artifact: each is either verified by a named template or excluded with a reason, so a new or forgotten function fails the suite.
 
 ## Trust chain

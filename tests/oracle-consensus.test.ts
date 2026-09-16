@@ -4,7 +4,7 @@ import { Capability, NO_CATEGORY, Script, declareTx } from '../src/model.js';
 import {
   Universe, fixTx, genConcreteTx, makeRng, verifyTokensWithLibauth, type ConcreteTx, type ConcreteUtxo,
 } from '../src/oracle/concrete.js';
-import { getContext, type Z3, type Z3Solver } from '../src/z3.js';
+import { getContext, newSolver, type Z3, type Z3Solver } from '../src/z3.js';
 
 /**
  * Differential test of the hand-written CashTokens tally (src/consensus.ts) against libauth's
@@ -27,7 +27,7 @@ beforeAll(async () => { z3 = await getContext(); });
 
 function modelSolver(ctx: ConcreteTx): Z3Solver {
   const tx = declareTx(z3, CAPACITY.nIn, CAPACITY.nOut);
-  const solver = new z3.Solver();
+  const solver = newSolver(z3);
   addConsensusRules(z3, solver, tx, CATEGORIES);
   fixTx(z3, solver, tx, ctx);
   return solver;

@@ -6,7 +6,7 @@ import {
   Universe, evaluateWithLibauth, fixTx, genConcreteTx, makeRng, scriptToBytecode, type ConcreteTx,
 } from '../src/oracle/concrete.js';
 import { generateScript } from '../src/oracle/scriptgen.js';
-import { getContext, type Z3 } from '../src/z3.js';
+import { getContext, newSolver, type Z3 } from '../src/z3.js';
 
 /**
  * Differential test of the symbolic interpreter against libauth's BCH VM (the oracle).
@@ -73,7 +73,7 @@ async function runCase(seed: number, exact: boolean): Promise<CaseResult> {
     // the generator's fault. Either way surface it with the libauth verdict.
     return { seed, real, admits: false, paths: 0, modelError: (e as Error).message, asm: disassembleBytecodeBch(bytecode), ctx };
   }
-  const solver = new z3.Solver();
+  const solver = newSolver(z3);
   fixTx(z3, solver, tx, ctx);
   let admits = false;
   for (const path of paths) {

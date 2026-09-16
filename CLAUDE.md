@@ -25,7 +25,15 @@ pnpm check                           # typecheck + lint (run before considering 
 pnpm test                            # every test file, each in its own process (run-tests.ts via tsx)
 pnpm test:watch                      # vitest watch, for iterating
 pnpm exec vitest run tests/<file>    # a single file (fast iteration)
+scripts/install-z3.sh                # native z3 (pinned release) into .tools/; the artifact proofs need it
 ```
+
+The artifact proofs (`expectArtifactSafe`/`expectArtifactLeaks`) are decided by a **native z3 process
+per query** from SMT-LIB text (`checkNative` in `src/z3.ts`; `Z3_BIN` overrides the binary, `Z3_SMT_DIR`
+keeps the `.smt2` files). Do not move them back onto the wasm bindings' `check()`: under the larger
+builds its garbage-collection finalizer races the worker thread and produced hangs, heap corruption and
+OOM aborts that depended on process history. The wasm side still builds every expression and runs the
+oracle/unit queries; keep queries there small.
 
 **`pnpm test` deliberately spawns one process per test file** (`run-tests.ts`). This is load-bearing,
 not incidental: `z3-solver` allocates a large `WebAssembly.Memory` per Z3 init and never frees it, and
@@ -57,9 +65,8 @@ the model to admit whatever libauth accepts (and to agree both ways on the exact
 the seed, the script disassembly and the transaction. `ORACLE_CASES` / `ORACLE_SEED` scale and re-seed
 the fuzzing (e.g. `ORACLE_CASES=1500 ORACLE_SEED=7 pnpm exec vitest run tests/oracle-interpreter.test.ts`);
 stay at or below ~1500 cases per run, since Z3's wasm heap is never reclaimed within a process (3000 hits
-the 2 GB limit) — sweep further with more seeds, not more cases. Separately, z3-solver's wasm worker can
-abort with "corrupted its heap memory" at teardown; it predates the oracle work, is rare, and shows up as
-an unhandled error (occasionally a spurious failure) in `historical-leak.test.ts` — rerun the file. Class
+the 2 GB limit) — sweep further with more seeds, not more cases. (The wasm worker's teardown abort that used to make
+`historical-leak.test.ts` flaky is gone with the native runtime.) Class
 identities (`ATTACKER`, `BURN`, covenant ids, commitment ints) are only *necessary* conditions for byte
 equality, so their equalities are marked `lossy` and the interpreter asserts them only in positive
 position (never their negation); do not "simplify" that away, and do not encode it with free Z3

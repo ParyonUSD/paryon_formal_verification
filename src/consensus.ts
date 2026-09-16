@@ -12,17 +12,17 @@ import { any, countIf, type Bool, type Z3, type Z3Solver } from './z3.js';
  * no-token so they cannot masquerade as carrying a capability; present slots must
  * respect category <-> token consistency.
  */
-function addStructure(z3: Z3, solver: Z3Solver, slots: Utxo[]): void {
+function addStructure(z3: Z3, out: Bool[], slots: Utxo[]): void {
   slots.forEach((utxo, i) => {
-    solver.add(utxo.capability.ge(Capability.NONE), utxo.capability.le(Capability.MINTING));
+    out.push(utxo.capability.ge(Capability.NONE), utxo.capability.le(Capability.MINTING));
     // Finite enum domains for category/script (essential for solver performance).
-    solver.add(utxo.category.ge(0), utxo.category.le(MAX_CATEGORY));
-    solver.add(utxo.script.ge(0), utxo.script.le(MAX_SCRIPT));
+    out.push(utxo.category.ge(0), utxo.category.le(MAX_CATEGORY));
+    out.push(utxo.script.ge(0), utxo.script.le(MAX_SCRIPT));
 
     const hasNft = utxo.capability.ge(Capability.IMMUTABLE);
     const hasToken = z3.Or(hasNft, utxo.fts.gt(0));
 
-    solver.add(
+    out.push(
       z3.If(
         utxo.present,
         z3.And(
@@ -44,7 +44,7 @@ function addStructure(z3: Z3, solver: Z3Solver, slots: Utxo[]): void {
     // Contiguity: a present slot implies the previous slot is present, so the
     // input/output count is a well-defined prefix.
     const prev = slots[i - 1];
-    if (prev) solver.add(z3.Implies(utxo.present, prev.present));
+    if (prev) out.push(z3.Implies(utxo.present, prev.present));
   });
 }
 
@@ -76,7 +76,7 @@ function capOfCat(z3: Z3, utxo: Utxo, cat: number, capability: number): Bool {
  * Fungible-token conservation is intentionally omitted: fungible tokens carry no
  * capability, so they are irrelevant to leak-freedom (a separate property).
  */
-function addTokenTally(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: number[]): void {
+function addTokenTally(z3: Z3, out: Bool[], tx: SymbolicTx, categories: number[]): void {
   for (const cat of categories) {
     const hasMintingIn = any(z3, tx.inputs.map((utxo) => capOfCat(z3, utxo, cat, Capability.MINTING)));
 
@@ -86,9 +86,9 @@ function addTokenTally(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: num
     const nftIn = countIf(z3, tx.inputs.map((utxo) => nftOfCat(z3, utxo, cat)));
     const nftOut = countIf(z3, tx.outputs.map((utxo) => nftOfCat(z3, utxo, cat)));
 
-    solver.add(z3.Implies(z3.Not(hasMintingIn), mintingOut.eq(0)));
-    solver.add(z3.Implies(z3.Not(hasMintingIn), mutableOut.le(mutableIn)));
-    solver.add(z3.Implies(z3.Not(hasMintingIn), nftOut.le(nftIn)));
+    out.push(z3.Implies(z3.Not(hasMintingIn), mintingOut.eq(0)));
+    out.push(z3.Implies(z3.Not(hasMintingIn), mutableOut.le(mutableIn)));
+    out.push(z3.Implies(z3.Not(hasMintingIn), nftOut.le(nftIn)));
   }
 }
 
@@ -98,7 +98,19 @@ function addTokenTally(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: num
  * range over the unbounded category domain symbolically).
  */
 export function addConsensusRules(z3: Z3, solver: Z3Solver, tx: SymbolicTx, categories: number[]): void {
-  addStructure(z3, solver, tx.inputs);
-  addStructure(z3, solver, tx.outputs);
-  addTokenTally(z3, solver, tx, categories);
+  solver.add(...consensusRules(z3, tx, categories));
+}
+
+/**
+ * The consensus rules as a list of constraints, built once per transaction. A build with several
+ * path queries adds the same expressions to each of them: z3-solver's wasm bindings are fragile under
+ * heavy expression allocation (crashes in the AST manager were observed when every solver rebuilt
+ * these), so sharing the objects is a robustness measure, not just an optimisation.
+ */
+export function consensusRules(z3: Z3, tx: SymbolicTx, categories: number[]): Bool[] {
+  const out: Bool[] = [];
+  addStructure(z3, out, tx.inputs);
+  addStructure(z3, out, tx.outputs);
+  addTokenTally(z3, out, tx, categories);
+  return out;
 }

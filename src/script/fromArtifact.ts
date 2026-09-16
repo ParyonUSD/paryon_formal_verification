@@ -1,7 +1,7 @@
-import { addConsensusRules } from '../consensus.js';
+import { consensusRules } from '../consensus.js';
 import { declareTx, type SymbolicTx } from '../model.js';
 import { inputsRespectInvariant, privilegedInputsOnlyAt, type LeakPolicy } from '../policy.js';
-import type { Z3, Z3Solver } from '../z3.js';
+import { newSolver, type Bool, type Z3, type Z3Solver } from '../z3.js';
 import { asmToScript } from './script.js';
 import { ARG, interpret, seedSelector, type InterpretStats, type Path, type SVal } from './interpreter.js';
 
@@ -43,8 +43,16 @@ export interface ArtifactConfig {
 export interface BuiltArtifact {
   tx: SymbolicTx;
   policy: LeakPolicy;
-  /** One solver per reachable combination of script paths, each fully loaded. */
-  solvers: Z3Solver[];
+  /** The reachable combinations of script paths, as the constraints each contributes. */
+  paths: Bool[][];
+  /**
+   * A fresh, fully loaded solver for one path combo plus extra assertions (a witness). Every query
+   * gets its own solver: it is exported as SMT-LIB and decided in a native z3 process (see
+   * `checkNative`), so there is no incremental state to share.
+   */
+  solverFor(path: number, extra?: Bool[]): Z3Solver;
+  /** Every solver created by `solverFor`, kept referenced (see there). */
+  keepAlive: Z3Solver[];
   /**
    * Inputs governed by a covenant this template runs (designated + every interpreted covenant's
    * active input). The preservation query restricts preserved-class NFTs to these; the leak query
@@ -99,15 +107,27 @@ export function buildFromArtifact(z3: Z3, specs: CovenantSpec[], cfg: ArtifactCo
   // Inputs governed by a covenant this template runs: the designated privileged inputs plus the active
   // input of every interpreted covenant (the function NFTs sit there).
   const governed = [...new Set([...cfg.designatedInputs, ...specs.map((spec) => spec.activeIndex)])];
-  const solvers = combos.map((combo) => {
-    const solver = new z3.Solver();
-    addConsensusRules(z3, solver, tx, cfg.categories);
-    cfg.setup(z3, solver, tx);
-    solver.add(inputsRespectInvariant(z3, tx, cfg.policy));
-    solver.add(privilegedInputsOnlyAt(z3, tx, cfg.policy, cfg.designatedInputs));
-    for (const path of combo) for (const c of path.constraints) solver.add(c);
+  // Built once and shared by every query (see consensusRules on why sharing matters). The template's
+  // `setup` is captured through a collector so its constraints are expressions, not solver state.
+  const setup: Bool[] = [];
+  cfg.setup(z3, { add: (...cs: Bool[]) => { setup.push(...cs); } } as unknown as Z3Solver, tx);
+  const shared: Bool[] = [
+    ...consensusRules(z3, tx, cfg.categories),
+    ...setup,
+    inputsRespectInvariant(z3, tx, cfg.policy),
+    privilegedInputsOnlyAt(z3, tx, cfg.policy, cfg.designatedInputs),
+  ];
+  const paths = combos.map((combo) => combo.flatMap((path) => path.constraints));
+  // Every solver handed out stays referenced for the build's lifetime: z3-solver frees a solver from a
+  // garbage-collection finalizer, and a free racing a running `check()` in the worker thread was
+  // observed to hang or corrupt Z3. Memory is reclaimed when the test file's process exits.
+  const keepAlive: Z3Solver[] = [];
+  const solverFor = (path: number, extra: Bool[] = []): Z3Solver => {
+    const solver = newSolver(z3);
+    solver.add(...shared, ...paths[path]!, ...extra);
+    keepAlive.push(solver);
     return solver;
-  });
+  };
 
-  return { tx, policy: cfg.policy, solvers, governedInputs: governed };
+  return { tx, policy: cfg.policy, paths, solverFor, governedInputs: governed, keepAlive };
 }

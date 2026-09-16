@@ -3,7 +3,7 @@ import { compose, type Covenant } from './covenant.js';
 import { addConsensusRules } from '../src/consensus.js';
 import { Capability, Script, declareTx } from '../src/model.js';
 import { leakWitness, preservationWitness } from '../src/policy.js';
-import { getContext, type Z3, type Z3Solver } from '../src/z3.js';
+import { getContext, newSolver, type Z3, type Z3Solver } from '../src/z3.js';
 
 const PARYON = 1;
 const LOAN_SCRIPT = Script.FIRST_COVENANT; // id 2
@@ -20,7 +20,7 @@ beforeAll(async () => {
  * Both spend a mutable PARYON loan NFT at input 0.
  */
 function setup(z3: Z3, nOut: number, withSecondInput = false) {
-  const s = new z3.Solver();
+  const s = newSolver(z3);
   const tx = declareTx(z3, 2, nOut);
   addConsensusRules(z3, s, tx, [PARYON]);
   // Input 0: the loan, a mutable PARYON NFT controlled by the loan covenant.
