@@ -22,9 +22,14 @@ import { bytesToNum, leadingByte, type SVal } from './value.js';
  * vs a script vs a genesis mint, and how capability classes are encoded.
  */
 
-// Category id base for genesis-minted categories (per genesis input index). Distinct from the
-// registry'solver category ids and outside the tallied/internal sets — a fresh, user-facing category.
-// (LoanKeyFactory mints one as reservedTokenId + 0x02.)
+// Category id base for genesis-minted categories, offset by the *identity of the spent transaction*
+// (see catView). Distinct from the registry's category ids and outside the tallied/internal sets — a
+// fresh, user-facing category. (LoanKeyFactory mints one as reservedTokenId + 0x02.)
+//
+// Keyed by `outpointTx`, not by the input's position: a genesis category IS the spent transaction's
+// hash, so two inputs spending outputs of the same transaction derive the *same* category and inputs
+// spending different transactions derive different ones. Position keying got both backwards. The range
+// (GENESIS_BASE .. GENESIS_BASE + nIn - 1) must stay above every registry id and within MAX_CATEGORY.
 const GENESIS_BASE = 20;
 // Suffix classes of a category-like byte string, i.e. what `tokenCategory` (+ an appended capability
 // byte) can serialise to. 0..3 are the introspection results; 4..9 arise only from appending a byte
@@ -42,6 +47,8 @@ const APPEND_CLASS: Record<number, Record<number, number>> = {
 // Commitment constants longer than this are not read as an integer (the model's commitment abstraction
 // only ever needs the single-byte function identifiers; longer constants fall outside exact-int range).
 const MAX_COMMITMENT_CONST_BYTES = 6;
+/** `constSuffixClass`: the constant is the capability suffix of no tokenCategory at all. */
+const NO_SUFFIX = -1;
 
 /**
  * The result of a modelled equality. `e` is null when the compare cannot move a capability. `lossy`
@@ -65,6 +72,11 @@ export interface CapabilityModel {
   compare(op: number, top: SVal, second: SVal): SVal;
   /** The byte length of a stack value as a model Int (`OP_SIZE`), or null when unknown. */
   lengthOf(v: SVal): Num | null;
+  /**
+   * The numeric value of a stack item as a model Int, or null when it is not a resolvable number.
+   * Used by the interpreter's linear arithmetic (`OP_ADD`/`OP_1ADD`/... against a constant).
+   */
+  numValue(v: SVal): Num | null;
 }
 
 export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number): CapabilityModel {
@@ -109,7 +121,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       // class maps to one of the non-category classes 4..9 (see APPEND_CLASS), which keeps equality
       // exact: `0x + 02` equals `0x + 02` but never a category, and never `0x + 01`.
       const base = catView(a!);
-      const baseCatId = base?.catId ?? (a!.k === 'outpoint' ? GENESIS_BASE + a!.i : null);
+      const baseCatId: Num | number | null = base?.catId
+        ?? (a!.k === 'outpoint' ? tx.inputs[a!.i]!.outpointTx.add(GENESIS_BASE) : null);
       const suffix = b!.k === 'bytes' && b!.v.length === 1 && (b!.v[0] === Capability.MUTABLE || b!.v[0] === Capability.MINTING)
         ? b!.v[0] : null;
       if (baseCatId !== null && suffix !== null) {
@@ -132,6 +145,30 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   }
 
   const eqCategory = (x: CatView, y: CatView): Bool => z3.And(eqInt(x.catId, y.catId), eqInt(x.cls, y.cls));
+
+  // ---- capability suffix ----
+  // `tokenCategory.split(32)[1]` is the other half of the introspection string: the empty string for a
+  // bare category (an immutable NFT or a fungible-only UTXO), 0x01 for mutable, 0x02 for minting —
+  // exactly the suffix classes 1, 2 and 3. `Borrowing.borrow` authenticates its prepared loanKey this
+  // way (`require(loanKeyCapability == 0x02)`), so dropping it let a *non-minting* NFT pass as the
+  // loanKey and the borrow outputs then carried the wrong category. Only a raw introspection field is
+  // handled, whose class is 1..3 whenever the split succeeds at all, which makes this exact rather
+  // than lossy: a category-less field (class 0) is a split past the end, which the VM rejects and this
+  // equality reports false.
+  const capSuffixClass = (v: SVal): Num | null => {
+    if (v.k !== 'split' || v.at !== 32 || v.side !== 'R' || v.v.k !== 'field') return null;
+    if (v.v.f === 'utxoCat') return catClass(v.v.i, 'in');
+    if (v.v.f === 'outCat') return catClass(v.v.i, 'out');
+    return null;
+  };
+  /** The suffix class a constant is the suffix of: `0x` -> bare, `0x01` -> mutable, `0x02` -> minting. */
+  const constSuffixClass = (v: SVal): number | null => {
+    if (v.k !== 'bytes') return null;
+    if (v.v.length === 0) return 1;
+    if (v.v.length === 1 && v.v[0] === Capability.MUTABLE) return 2;
+    if (v.v.length === 1 && v.v[0] === Capability.MINTING) return 3;
+    return NO_SUFFIX; // any other string is the suffix of no tokenCategory
+  };
 
   // ---- locking-bytecode interpretation ----
   type ScriptView = { kind: 'in' | 'out'; i: number } | { kind: 'const'; id: number };
@@ -177,6 +214,70 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   const commitSlot = (v: SVal) =>
     v.k === 'field' && v.f === 'utxoCommit' ? tx.inputs[v.i]! : v.k === 'field' && v.f === 'outCommit' ? tx.outputs[v.i]! : null;
   const commitExpr = (v: SVal): Num | null => commitSlot(v)?.commitment ?? null;
+
+  // ---- the leading identifier byte ----
+  // Every covenant tells one kind of state NFT from another by its first byte:
+  // `nftCommitment.split(1)[0] == 0x00` is the price contract, `0x01` a loan, `0x04` the
+  // startRedemption function NFT. The int reading cannot supply it (it reads the whole string), so the
+  // model carries the byte itself and this view finds it in a stack value. `guard` is what the VM
+  // requires for the split that took the byte to succeed at all — splitting an empty commitment at 1
+  // is an error, so the equality must be false there. `fromSlot` marks a value that came from a
+  // commitment field, which is what makes the comparison worth a constraint at all.
+  type HeadView = { head: Num | number; guard: Bool | null; fromSlot: boolean };
+  const bothGuards = (x: Bool | null, y: Bool | null): Bool | null =>
+    x === null ? y : y === null ? x : z3.And(x, y);
+  function headView(v: SVal): HeadView | null {
+    const slot = commitSlot(v);
+    if (slot) return { head: slot.commitmentHead, guard: null, fromSlot: true };
+    if (v.k === 'bytes') return v.v.length > 0 ? { head: v.v[0]!, guard: null, fromSlot: false } : null;
+    // A left split keeps the front of the string, so it keeps its first byte — provided the string was
+    // long enough for the split in the first place.
+    if (v.k === 'split' && v.side === 'L' && v.at >= 1) {
+      const inner = headView(v.v);
+      if (!inner) return null;
+      const len = lengthOf(v.v);
+      // A statically known length is a fact about the value, not a constraint to emit; a symbolic one
+      // (a commitment field) becomes the guard. Over-splitting a too-short constant stays admitted.
+      const guard = len !== null && typeof len !== 'number' ? len.ge(v.at) : null;
+      return { head: inner.head, guard: bothGuards(inner.guard, guard), fromSlot: inner.fromSlot };
+    }
+    if (v.k === 'cat') {
+      for (const part of v.parts) {
+        if (lengthOf(part) === 0) continue; // a statically empty part contributes nothing
+        // The first byte of a concatenation is the first part's only if that part is certainly
+        // non-empty. A commitment field may be empty at run time, and then the byte comes from
+        // whatever follows it — so `in.commitment + 0x05` has no known head, and claiming the field's
+        // would reject a transaction the VM accepts. `certainlyNonEmpty` asks for a statically known
+        // byte somewhere in the part, which a nested `0x01 + toPaddedBytes(..) + field` still has even
+        // though its total length is symbolic.
+        return certainlyNonEmpty(part) ? headView(part) : null;
+      }
+    }
+    return null;
+  }
+  /**
+   * A statically known lower bound on a value's byte length: the parts whose size is known from the
+   * program text, with anything run-time-dependent counted as possibly empty. Used only to decide
+   * whether a value is certainly non-empty, so under-counting is always safe.
+   */
+  function concreteMinLength(v: SVal): number {
+    switch (v.k) {
+      case 'bytes': return v.v.length;
+      case 'sized': return v.len;
+      case 'outpoint': return 32;
+      case 'seed': return v.seed.kind === 'category' ? 32 : 0;
+      case 'split': return v.side === 'L' ? v.at : 0;
+      case 'cat': return v.parts.reduce((total, part) => total + concreteMinLength(part), 0);
+      default: return 0; // a field, an opaque value: may be empty
+    }
+  }
+  const certainlyNonEmpty = (v: SVal): boolean => concreteMinLength(v) >= 1;
+
+  const headEquality = (x: HeadView, y: HeadView): Bool => {
+    const guard = bothGuards(x.guard, y.guard);
+    const eq = eqInt(x.head, y.head);
+    return guard === null ? eq : z3.And(guard, eq);
+  };
 
   // ---- byte lengths ----
   // Exact where the structure is known: constants, sized opaques (NUM2BIN, hashes), commitment fields,
@@ -237,6 +338,21 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   }
 
   function equalConstraint(a: SVal, b: SVal): EqualityResult {
+    const suffixA = capSuffixClass(a), suffixB = capSuffixClass(b);
+    if (suffixA !== null || suffixB !== null) {
+      if (suffixA !== null && suffixB !== null) return exact(suffixA.eq(suffixB));
+      const known = (suffixA ?? suffixB)!;
+      const constant = constSuffixClass(suffixA !== null ? b : a);
+      if (constant === null) return NONE;
+      return exact(constant === NO_SUFFIX ? z3.Bool.val(false) : known.eq(constant));
+    }
+    // Outpoint txid identity: `tx.inputs[i].outpointTransactionHash == tx.inputs[j].outpointTransactionHash`,
+    // the adjacency check `Loan.interact` / `LoanTokenSidecar.attach` authenticate their partner with.
+    // Exact, not lossy: `outpointTx` is a per-input identity variable, so two inputs' hashes are equal
+    // exactly when the variables are (unlike script ids, which stand for a *class* of scripts).
+    if (a.k === 'outpoint' && b.k === 'outpoint') {
+      return exact(tx.inputs[a.i]!.outpointTx.eq(tx.inputs[b.i]!.outpointTx));
+    }
     const ca = catView(a), cb = catView(b);
     if (ca && cb) return exact(eqCategory(ca, cb));
     const sc = eqScript(a, b);
@@ -250,6 +366,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       const parts: Bool[] = [];
       const ia = commitIntOf(a), ib = commitIntOf(b);
       if (ia !== null && ib !== null) parts.push(eqInt(ia, ib));
+      const heads = [headView(a), headView(b)];
+      if (heads[0] && heads[1]) parts.push(headEquality(heads[0], heads[1]));
       const la = lengthOf(a), lb = lengthOf(b);
       if (la !== null && lb !== null) parts.push(eqInt(la, lb));
       else if (la !== null || lb !== null) {
@@ -262,6 +380,10 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       }
       return parts.length > 0 ? lossy(z3.And(...parts)) : NONE;
     }
+    // `commitment.split(1)[0] == 0x01`: neither side is a whole commitment field, but both have a
+    // known first byte. Necessary for byte equality, never asserted under negation (lossy).
+    const headA = headView(a), headB = headView(b);
+    if (headA && headB && (headA.fromSlot || headB.fromSlot)) return lossy(headEquality(headA, headB));
     return NONE; // value / amount / opaque -> no capability content
   }
 
@@ -304,7 +426,7 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
   }
 
-  return { equalConstraint, numEqResult, compare, lengthOf: lengthNum };
+  return { equalConstraint, numEqResult, compare, lengthOf: lengthNum, numValue: numVal };
 }
 
 function countPresent(z3: Z3, tx: SymbolicTx, of: 'in' | 'out'): Num {

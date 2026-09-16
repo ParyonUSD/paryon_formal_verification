@@ -49,6 +49,43 @@ export interface LeakPolicy {
    * Optional; templates without it check the capability leak only.
    */
   functionNfts?: FunctionNftRule[];
+  /**
+   * The sidecar pairs: covenant UTXOs that are always created next to a companion UTXO, and
+   * authenticate that companion by outpoint adjacency alone (`Loan.interact` and
+   * `StabilityPool.interact` require `inputs[i+1]` to come from the same transaction one output
+   * later, and never check its locking script). The pair is therefore part of the system invariant,
+   * exactly like ownership: assumed on inputs, and discharged on outputs by
+   * {@link adjacencyWitness}. Optional; a template that pins its sidecar by hand does not need it.
+   */
+  adjacency?: AdjacencyRule[];
+  /** The state NFTs' leading identifier bytes; see {@link StateShapeRule}. Optional. */
+  stateShapes?: StateShapeRule[];
+}
+
+/**
+ * "A UTXO of this (category, capability) on this script always has a companion on `companionScript`
+ * at the next output index of the transaction that created it."
+ *
+ * This is what the per-transaction templates wrote down by hand when they pinned input 1 to the loan
+ * sidecar. Without it the model lets an attacker put anything at the adjacent outpoint, which passes
+ * the covenant's adjacency check while its sidecar covenant does not run — and the sidecar's output
+ * pin goes missing. It is a genuine inductive invariant of the deployment, not a scoping pin, which is
+ * why it comes with its own obligation on the outputs.
+ */
+export interface AdjacencyRule {
+  category: number;
+  /** MUTABLE or MINTING: the capability that makes this UTXO the covenant's state holder. */
+  capability: number;
+  script: number;
+  companionScript: number;
+}
+
+/** True when a UTXO is the state holder of an adjacency rule. */
+function matchesAdjacency(z3: Z3, utxo: Utxo, rule: AdjacencyRule): Bool {
+  return z3.And(
+    utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(rule.capability),
+    utxo.script.eq(rule.script),
+  );
 }
 
 /** A class of function NFTs: this category, immutable, this commitment length, only on these scripts. */
@@ -56,16 +93,87 @@ export interface FunctionNftRule {
   category: number;
   scripts: number[];
   commitmentLength: number;
+  /**
+   * script id -> the commitment identifier that script's function NFT carries, where the deployment
+   * binds them (it does: each function NFT was minted once, on its own function contract, with its own
+   * identifier byte — the fact `verify_contract_deployment` checks at genesis). Without it the model
+   * lets a function NFT sit on a *sibling* function's script, and a covenant that picks its output
+   * index from the adjacent commitment then pins the wrong output and leaves another one free.
+   */
+  commitments?: Record<number, number>;
+  /**
+   * True when these function NFTs are the *only* immutable NFTs of their category carrying a
+   * **non-empty** commitment.
+   *
+   * It is needed because not every consumer checks the commitment length: `Redeemer.createRedemption`
+   * authenticates the startRedemption function NFT by category and leading byte alone
+   * (`nftCommitment.split(1)[0] == 0x04`), so a paryon immutable NFT with a *longer* commitment
+   * starting 0x04 impersonates it. With this flag the class is "immutable NFT of this category with a
+   * non-empty commitment", which is the real deployment fact for the paryon category.
+   *
+   * The empty-commitment case is excluded deliberately, not for convenience: `Borrowing.borrow` pins
+   * its borrowed-token output to the *bare* `paryonTokenId` with `nftCommitment == 0x`, and a bare
+   * category is "immutable NFT or fungible-only", so borrow can hand the borrower a paryon immutable
+   * NFT with an empty commitment on any script. It is harmless — every consumer either requires
+   * `commitment.length == 1` or splits at 1, which fails on an empty commitment — and it is recorded
+   * in docs/artifact-derivation.md.
+   *
+   * It does NOT hold for the pool category: stakers hold immutable pool receipts whose commitment is
+   * a 4-byte epoch plus an amount. Those are told apart from the pool functions by length, which the
+   * pool covenants do check, so the plain `commitmentLength` class is exact there.
+   */
+  exhaustiveNonEmpty?: boolean;
+}
+
+/**
+ * "A UTXO of this (category, capability) on this script carries this leading commitment byte."
+ *
+ * The state NFTs are told apart by that byte: the price contract's state starts 0x00 and a loan's
+ * starts 0x01, and the covenants check one or the other rather than the locking script (`manage`
+ * authenticates the price at input 0 by `nftCommitment.split(1)[0] == 0x00` and the loan at input 1 by
+ * its own `identifier == 0x01`). Binding the byte to the script is what stops a price contract being
+ * used where a loan belongs. Assumed on inputs, discharged on outputs by {@link stateShapeWitness}.
+ *
+ * Only the loan and price states have a fixed identifier: the Borrowing, Collector, StabilityPool,
+ * Redemption and Payout states begin with a period counter, a token id or a public-key hash, so there
+ * is nothing to bind and nothing that could be impersonated by binding.
+ */
+export interface StateShapeRule {
+  category: number;
+  capability: number;
+  script: number;
+  /** The first commitment byte this covenant's state NFT always carries. */
+  head: number;
 }
 
 /** True when a UTXO has the shape of a function NFT under `rule` (whatever script it sits on). */
 function hasFunctionNftShape(z3: Z3, utxo: Utxo, rule: FunctionNftRule): Bool {
   return z3.And(
     utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
-    utxo.commitmentLength.eq(rule.commitmentLength),
+    // An exhaustive class covers every non-empty commitment of its category, not just the one length
+    // its own covenants authenticate by (see FunctionNftRule.exhaustiveNonEmpty).
+    rule.exhaustiveNonEmpty === true ? utxo.commitmentLength.ge(1) : utxo.commitmentLength.eq(rule.commitmentLength),
+  );
+}
+
+/** True when a UTXO is a covenant's state NFT under `rule` (the pair the leading byte is bound to). */
+function matchesStateShape(z3: Z3, utxo: Utxo, rule: StateShapeRule): Bool {
+  return z3.And(
+    utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(rule.capability),
+    utxo.script.eq(rule.script),
   );
 }
 const onScripts = (z3: Z3, utxo: Utxo, scripts: number[]): Bool => any(z3, scripts.map((sc) => utxo.script.eq(sc)));
+/** On one of the function scripts, carrying that script's own identifier where the two are bound. */
+function onFunctionSite(z3: Z3, utxo: Utxo, rule: FunctionNftRule): Bool {
+  return any(z3, rule.scripts.map((sc) => {
+    const id = rule.commitments?.[sc];
+    // The site pins the length too: an exhaustive class admits any non-empty commitment into the
+    // shape, but only the function NFT's own length is a legitimate place for it to sit.
+    const onScript = z3.And(utxo.script.eq(sc), utxo.commitmentLength.eq(rule.commitmentLength));
+    return id === undefined ? onScript : z3.And(onScript, utxo.commitment.eq(id));
+  }));
+}
 
 /** True when a UTXO carries an internal-authority category with mutable/minting capability. */
 export function isInternalPrivileged(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
@@ -103,8 +211,57 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
     ...tx.inputs.map((utxo) => z3.Implies(isInternalPrivileged(z3, utxo, policy), ownedByCovenant(z3, utxo, policy))),
     // Function-NFT authenticity: anything of that shape sits on a function script.
     ...tx.inputs.flatMap((utxo) => (policy.functionNfts ?? []).map((rule) =>
-      z3.Implies(hasFunctionNftShape(z3, utxo, rule), onScripts(z3, utxo, rule.scripts)))),
+      z3.Implies(hasFunctionNftShape(z3, utxo, rule), onFunctionSite(z3, utxo, rule)))),
+    // Sidecar adjacency: the UTXO one output later than a covenant's state holder is its companion.
+    // The covenants authenticate that companion by outpoint alone, so this is the half of the
+    // authentication the bytecode does not carry; `adjacencyWitness` discharges it on the outputs.
+    // State identifiers: a loan's commitment starts 0x01, a price contract's 0x00.
+    ...tx.inputs.flatMap((utxo) => (policy.stateShapes ?? []).map((rule) => z3.Implies(
+      matchesStateShape(z3, utxo, rule),
+      z3.And(utxo.commitmentHead.eq(rule.head), utxo.commitmentLength.ge(1)),
+    ))),
+    ...tx.inputs.flatMap((utxo, i) => (policy.adjacency ?? []).flatMap((rule) =>
+      tx.inputs.flatMap((other, j) => (i === j ? [] : [z3.Implies(
+        z3.And(
+          matchesAdjacency(z3, utxo, rule), other.present,
+          other.outpointTx.eq(utxo.outpointTx), other.outpointIndex.eq(utxo.outpointIndex.add(1)),
+        ),
+        other.script.eq(rule.companionScript),
+      )])))),
   );
+}
+
+/**
+ * The state-shape witness: satisfiable exactly when some output is a covenant's state NFT but does not
+ * carry that covenant's leading identifier byte. It discharges {@link StateShapeRule} the way
+ * {@link adjacencyWitness} discharges the sidecar pairs — an assumption on the inputs is only sound if
+ * every transaction re-establishes it on its outputs.
+ */
+export function stateShapeWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  return any(z3, tx.outputs.flatMap((out) => (policy.stateShapes ?? []).map((rule) => z3.And(
+    matchesStateShape(z3, out, rule),
+    z3.Not(z3.And(out.commitmentHead.eq(rule.head), out.commitmentLength.ge(1))),
+  ))));
+}
+
+/**
+ * The adjacency witness: satisfiable exactly when some output is a covenant's state holder and the
+ * output that would become its companion — the next index — is absent or on the wrong script. That is
+ * the preservation obligation for {@link AdjacencyRule}: a transaction that creates a loan or a pool
+ * must create its sidecar right after it, or the next transaction to spend it could put anything at
+ * that outpoint and the sidecar's covenant would never run.
+ */
+export function adjacencyWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  const rules = policy.adjacency ?? [];
+  return any(z3, tx.outputs.flatMap((out, j) => rules.map((rule) => {
+    const next = tx.outputs[j + 1];
+    // At the last slot the companion has nowhere to go: within this bound the obligation fails, which
+    // is reported rather than hidden (a wider capacity is the fix if a real transaction needs it).
+    const companion = next === undefined
+      ? z3.Bool.val(false)
+      : z3.And(next.present, next.script.eq(rule.companionScript));
+    return z3.And(matchesAdjacency(z3, out, rule), z3.Not(companion));
+  })));
 }
 
 /**
@@ -112,57 +269,15 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
  * NFT but sits on neither a function script nor a burn. Such an output is the second half of the
  * invariant the induction needs (the first being {@link leakWitness}): the loan and pool covenants
  * authenticate their delegate by shape alone, so a forged one anywhere else is full authority over
- * every loan / the pool. Query it with {@link preservedInputsOnlyAt}, like the preservation witness:
- * an ungoverned input of that shape is impossible on chain (it can only be spent by its covenant).
+ * every loan / the pool. In the whole-system model every function NFT's own covenant runs, so there
+ * is no ungoverned input of that shape to exclude and the witness is queried unrestricted.
  */
 export function forgedFunctionNftWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
   return any(z3, tx.outputs.flatMap((out) => (policy.functionNfts ?? []).map((rule) => z3.And(
     hasFunctionNftShape(z3, out, rule),
     z3.Not(out.script.eq(Script.BURN)),
-    z3.Not(onScripts(z3, out, rule.scripts)),
+    z3.Not(onFunctionSite(z3, out, rule)),
   ))));
-}
-
-/**
- * Restrict the privileged-input set to the designated covenant participants.
- *
- * On-chain, a UTXO carrying an internal mutable/minting capability can only be
- * spent by running the covenant that governs it (a loan needs its loan-function
- * machinery, the collector needs Collector.collect, etc.), which in turn pins
- * that UTXO'solver output. A model that lets the solver add an extra "ghost"
- * privileged input — owned by the right script but governed by nothing — would
- * inflate the tally and report spurious leaks on templates without an output
- * cap. This pins which input indices may carry a privileged capability; every
- * other input is non-privileged.
- *
- * Soundness note: this scopes each loan-function check to its canonical single-
- * operation transaction shape. Batching several governed loans into one tx is a
- * distinct (larger) template in which each loan is still individually pinned.
- */
-export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy, allowed: number[]): Bool {
-  return z3.And(
-    ...tx.inputs.map((utxo, i) =>
-      allowed.includes(i) ? z3.Bool.val(true) : z3.Not(isInternalPrivileged(z3, utxo, policy)),
-    ),
-  );
-}
-
-/**
- * The preservation counterpart of {@link privilegedInputsOnlyAt}: an immutable NFT of a preserved class
- * sits on a covenant script, so spending it means running that covenant, which recreates it (that is
- * what its own template proves). In a template that does not run it, such an input cannot occur; without
- * this restriction the solver adds an ungoverned function NFT as an extra input and reports it lost.
- * `governed` is every input index whose covenant this template interprets or designates.
- */
-export function preservedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy, governed: number[]): Bool {
-  const rules = policy.functionNfts ?? [];
-  return z3.And(
-    ...tx.inputs.map((utxo, i) =>
-      governed.includes(i) ? z3.Bool.val(true) : z3.Not(any(z3, rules.map((rule) => z3.And(
-        utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
-        z3.Or(onScripts(z3, utxo, rule.scripts), utxo.commitmentLength.eq(rule.commitmentLength)),
-      ))))),
-  );
 }
 
 /**

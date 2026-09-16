@@ -4,16 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`paryon_formal_verification` (formerly `z3-solver-ts`) is a bounded model checker that proves the
-ParyonUSD CashScript contracts cannot **leak an NFT capability** — i.e. no consensus-valid transaction
-allowed by the covenants can place a mutable/minting capability of an internal-authority category on an
-output other than an owning covenant or a burn (invariant preservation, so the induction closes). It uses Z3 (via `z3-solver` wasm bindings) and symbolically executes the
+`paryon_formal_verification` is a bounded model checker that proves the ParyonUSD CashScript contracts
+cannot **leak an NFT capability** — no consensus-valid transaction allowed by the covenants can place a
+mutable/minting capability of an internal-authority category on an attacker-controlled output. It uses
+Z3 (via `z3-solver` wasm bindings to build, a native z3 process to decide) and symbolically executes the
 compiled `@paryonusd/contracts` artifact bytecode.
 
-The proof lifts a single transaction to the full covenant lifetime by induction (see
-`inputsRespectInvariant` — the inputs are assumed already invariant-respecting). Read `README.md`,
-`docs/scope.md`, and `docs/artifact-derivation.md` before substantive work; they carry the soundness
-argument and the per-file map, and are kept current.
+There are **no transaction templates**. One symbolic transaction of fixed capacity (9 inputs, 11
+outputs) is built, and the solver chooses the shape: how many inputs and outputs, what each carries,
+which covenant sits where, which function runs, and whether operations are batched. The whole model is
+the consensus tally, the system invariant assumed of the inputs, and one rule per input — *if this
+input's script is a registered covenant, that covenant's bytecode runs at this index*.
+
+Read `README.md`, `docs/scope.md` and `docs/artifact-derivation.md` before substantive work; they carry
+the soundness argument, the ledger of invariants, and the per-file map, and are kept current.
 
 ## Commands
 
@@ -25,110 +29,109 @@ pnpm check                           # typecheck + lint (run before considering 
 pnpm test                            # every test file, each in its own process (run-tests.ts via tsx)
 pnpm test:watch                      # vitest watch, for iterating
 pnpm exec vitest run tests/<file>    # a single file (fast iteration)
-scripts/install-z3.sh                # native z3 (pinned release) into .tools/; the artifact proofs need it
+scripts/install-z3.sh                # the native z3 the proofs are decided in (.tools/, git-ignored)
 ```
 
-The artifact proofs (`expectArtifactSafe`/`expectArtifactLeaks`) are decided by a **native z3 process
-per query** from SMT-LIB text (`checkNative` in `src/z3.ts`; `Z3_BIN` overrides the binary, `Z3_SMT_DIR`
-keeps the `.smt2` files). Do not move them back onto the wasm bindings' `check()`: under the larger
-builds its garbage-collection finalizer races the worker thread and produced hangs, heap corruption and
-OOM aborts that depended on process history. The wasm side still builds every expression and runs the
-oracle/unit queries; keep queries there small.
-
 **`pnpm test` deliberately spawns one process per test file** (`run-tests.ts`). This is load-bearing,
-not incidental: `z3-solver` allocates a large `WebAssembly.Memory` per Z3 init and never frees it, and
-a reused Z3 `Context` bloats. Sharing a process/context across files makes later solves crawl and can
-make the run exit non-zero even when all tests pass. Do not "optimize" this into a single vitest run.
+not incidental: `z3-solver` allocates a large `WebAssembly.Memory` per Z3 init and never frees it, and a
+reused Z3 `Context` bloats. Do not "optimize" this into a single vitest run.
+
+`ORACLE_SEED` / `ORACLE_CASES` scale the differential oracle. `Z3_SMT_DIR` keeps the `.smt2` files any
+SMT solver can re-check. `Z3_BIN` overrides the native binary.
 
 ## Two-layer soundness obligation (the key architectural split)
 
-The correctness argument rests on a superset/abstraction split — understand which side any change lives
-on before touching it:
+Understand which side any change lives on before touching it:
 
 - **`src/consensus.ts` + the interpreter (`src/script/interpreter.ts`) must be FAITHFUL.** The
-  consensus tally is the trusted base (it enforces the CashTokens no-mint/no-mutable-without-input and
-  `nft_out <= nft_in` rules). The interpreter is the stack machine (opcode dispatch, stack routing,
-  CAT/SPLIT, branch forking); a mis-routed value or mis-matched branch would silently constrain the
-  *wrong* output — an error the superset argument does **not** catch.
+  consensus tally is the trusted base. The interpreter is the stack machine (opcode dispatch, stack
+  routing, CAT/SPLIT, index arithmetic, branch forking); a mis-routed value or a mis-matched branch
+  would silently constrain the *wrong* output — an error the superset argument does **not** catch.
 - **Everything else only needs to be CONSERVATIVE.** `src/script/capability.ts` (which comparisons
-  carry a capability), and dropping BCH values / token amounts / most commitment contents, only ever
+  carry a capability), and dropping BCH values / token amounts / commitment contents, only ever
   *remove* constraints. Fewer constraints = a superset of real transactions, so UNSAT on the model
-  implies UNSAT on chain. These can widen the admitted tx set but never hide a leak.
+  implies UNSAT on chain.
 
 When adding modelling, bias toward dropping constraints (safe) over adding them (must be provably
-faithful).
+faithful). If you add a constraint, add the construct to the fuzzer's exact subset
+(`src/oracle/scriptgen.ts`) so libauth has to agree with it in both directions.
 
-**The faithful half is checked against libauth**, not trusted: `src/oracle/` + `tests/oracle-*.test.ts`
-evaluate random concrete transactions and scripts with libauth's BCH VM / token validation and require
-the model to admit whatever libauth accepts (and to agree both ways on the exact subset). Any change to
-`interpreter.ts`, `capability.ts`, `consensus.ts` or `value.ts` must keep these green; a failure prints
-the seed, the script disassembly and the transaction. `ORACLE_CASES` / `ORACLE_SEED` scale and re-seed
-the fuzzing (e.g. `ORACLE_CASES=1000 ORACLE_SEED=7 pnpm exec vitest run tests/oracle-interpreter.test.ts`);
-stay at or below ~1000 cases per run, since Z3's wasm heap is never reclaimed within a process (1500 hits
-the 2 GB limit) — sweep further with more seeds, not more cases. (The wasm worker's teardown abort that used to make
-`historical-leak.test.ts` flaky is gone with the native runtime.) Class
-identities (`ATTACKER`, `BURN`, covenant ids, commitment ints) are only *necessary* conditions for byte
-equality, so their equalities are marked `lossy` and the interpreter asserts them only in positive
-position (never their negation); do not "simplify" that away, and do not encode it with free Z3
-booleans (that blew up Z3's memory on the manage regression build).
-
-## Engine vs ParyonUSD instantiation
+## The layout
 
 The engine under `src/` is general BCH/CashTokens and imports nothing from `src/covenants/`:
 
-- `src/z3.ts` — Z3 context + helpers (`getContext`, `any`, types `Z3`/`Z3Solver`/`Bool`/`Num`).
-- `src/model.ts` — symbolic UTXO/tx model; `Capability`/`Script` enums; category/script id bounds
-  (`MAX_CATEGORY`/`MAX_SCRIPT`) that keep the solver's domain finite.
-- `src/consensus.ts` — the trusted CashTokens tally + structural rules (`addConsensusRules`).
-- `src/policy.ts` — the leak-property *mechanism*, parameterised by a `LeakPolicy`: `leakWitness`,
-  `inputsRespectInvariant` (inductive hypothesis), `privilegedInputsOnlyAt` (which inputs may carry a
-  privileged cap), `isInternalPrivileged`.
-- `src/script/` — artifact interpreter: `script.ts` (ASM decode via `@cashscript/utils`), `value.ts`
-  (symbolic stack value language), `interpreter.ts` (stack machine), `capability.ts` (capability
-  abstraction), `fromArtifact.ts` (loads artifacts, seeds the stack, builds one solver per reachable
-  script-path combo).
-- `src/oracle/` — the libauth differential oracle: `concrete.ts` (concrete transactions, libauth
-  bridge, the abstraction `fixTx`), `scriptgen.ts` (random covenant-shaped scripts, exact/wide modes).
+- `src/z3.ts` — Z3 context, solver, and the native decision procedure. **Every proof is an expected
+  `unsat`, so a decision that answers "unsat" when z3 did not run passes the whole suite.** The verdict
+  reader is strict for that reason; `tests/native-decision.test.ts` guards it.
+- `src/model.ts` — symbolic UTXO/tx model: category, capability, script, commitment (integer reading,
+  length, leading byte), outpoint (transaction identity, index), presence.
+- `src/consensus.ts` — the CashTokens tally + structural and outpoint rules.
+- `src/policy.ts` — the invariant *mechanism*: the five clauses of `LeakPolicy`, the hypothesis on
+  inputs (`inputsRespectInvariant`), and one witness per clause.
+- `src/script/` — `script.ts` (ASM decode), `value.ts` (symbolic stack values), `interpreter.ts` (the
+  stack machine), `capability.ts` (the capability abstraction), `wholeSystem.ts` (the build).
 
-ParyonUSD-specific:
+ParyonUSD-specific, and the only hand-written inputs to the proof:
 
-- `src/covenants/ids.ts` — the category/script id registry (small ints; only equality matters, real
-  32-byte ids are checked by the sibling `verify_contract_deployment` tool).
-- `src/covenants/common.ts` — leak policy *values*, ownership map, function-NFT id enums
-  (`LoanFunction`/`PoolFunction`), input-shape helpers (`loanInput`, `functionNftInput`, `pin`, …).
-- `tests/*.test.ts` — per-transaction templates; each hand-writes only the input `setup` (tx shape)
-  and the leak policy, then calls `buildFromArtifact`. `tests/partners.ts` holds recreation/sidecar
-  partner `CovenantSpec`s.
+- `src/covenants/ids.ts` — the category/script id registry (small ints; only equality matters).
+- `src/covenants/registry.ts` — which script runs which artifact, with which constructor seeds.
+- `src/covenants/common.ts` — the identifiers the contracts authenticate by, and `SYSTEM_POLICY`.
 
-## The artifact-derivation pipeline (`buildFromArtifact`)
+## How to add a contract
 
-Every covenant's output pins are derived from bytecode — no covenant is hand-modelled. Flow:
-`asmToScript` (artifact bytecode → `(opcode|data)[]`) → `interpret` runs it per co-present covenant,
-emitting a Z3 constraint only for capability-moving comparisons (category equality, locking-bytecode
-equality, output-count caps; values/amounts/arithmetic stay opaque) → `fromArtifact` seeds the stack
-as `[funcArgs, selector?, constructorReversed]` and builds one `Z3Solver` per reachable script-path
-combo (cartesian product of per-covenant paths). `docs/artifact-derivation.md` lists the subtleties
-the bytecode forced correct (suffix-class category comparison, correlated OP_IF branches, runtime
-OP_RETURN burn detection, multi-function selector dispatch, concrete index arithmetic).
+Register it. That is the whole procedure:
 
-## Test structure
+1. Give its locking script an id in `src/covenants/ids.ts` (and a category id if it introduces one).
+2. Add an entry to `SYSTEM_REGISTRY` in `src/covenants/registry.ts`: the artifact, the constructor
+   `seeds` in declaration order (`seedScript` for a locking-script parameter, `seedCategory` for a
+   tokenId parameter, `seedOpaque` for anything that cannot feed a capability comparison), and
+   `abiIndices` if only some functions are modelled — every function left out needs an `excluded`
+   entry with a reason, or `tests/coverage.test.ts` fails.
+3. If it holds a privileged capability, add it to `SYSTEM_POLICY.ownership`. If it is a sidecar
+   authenticated by outpoint adjacency, add the pair to `SIDECAR_PAIRS`. If its state NFT carries a
+   fixed identifier byte, add it to `STATE_SHAPES`. Each of these is assumed of the inputs and must be
+   discharged on the outputs by its witness — the tests will tell you if it is not.
+4. Run `pnpm exec vitest run tests/whole-system.test.ts`. A new function must show up alive; if the
+   capacity cut list changed, understand why before updating it.
 
-Assertion helpers live in `tests/assertions.ts`: `expectArtifactSafe` (≥1 path realisable AND every
-path leak-free — the standard check), `expectArtifactLeaks` (a "composition matters" control: drop a
-partner covenant and show the leak reappears), plus lower-level `expectSat`/`expectNoLeak`/`expectLeak`.
-Coverage is organized by subsystem: `artifact-loan`, `artifact-redemption`, `artifact-pool`,
-`artifact-loankey`, `artifact-price`, plus `consensus`/`policy`/`historical-leak` unit tests and the
-libauth oracle tests `oracle-interpreter`/`oracle-consensus`/`oracle-decode`. `tests/coverage.test.ts` is
-the function-level ledger: every artifact function must be verified by a template or excluded with a
-reason — classify new functions there. `expectArtifactSafe` checks the leak witness *and* the
-function-NFT preservation witness (policy `preserve`); `buildFromArtifact` refuses a template whose
-output capacity leaves no unpinned slot, so bump `nOutputs` when it complains. `designatedInputs` must
-list every input a `setup` pins with a privileged or function-NFT class that no interpreted covenant
-governs (e.g. a partner dropped in a "composition matters" control).
+Do **not** add a transaction shape, an input pin, or an index assumption. If a witness goes SAT, the
+answer is either a genuine finding or a named missing precision — never a pin.
+
+## How to read a counterexample
+
+A SAT witness prints the whole transaction (`tests/wholeSystemReport.ts`): every present input and
+output with its script, category, capability, commitment (integer / length / leading byte), satoshi
+value and fungible amount, inputs also with their outpoint as `tx:index`, and for each input the
+covenant functions the model says run there. Work backwards from the output the witness fired on: find
+which covenant was supposed to pin it, and why the model let that covenant be absent or take a
+different branch. The usual answers, in order of likelihood:
+
+1. a *missing precision* — the model dropped a comparison the contract makes (check `capability.ts`:
+   is the comparison one it models at all?);
+2. a *missing invariant* — the contracts authenticate each other by a fact the hypothesis does not
+   carry (that is where adjacency, the state identifiers and the function-NFT site binding came from);
+3. a genuine multi-operation finding.
+
+## Capacity, and what the bound means
+
+9 inputs and 11 outputs: the smallest that admits every operation (`swapInRedemption` pins itself to
+input 8) while leaving the unpinned output slot a leak needs (`Borrowing.borrow` reads output 9). The
+builder refuses a capacity without that free slot.
+
+When a covenant reads a UTXO index the build does not carry, the path is pruned and
+`script == S ⇒ OR(paths)` collapses to `script == S ⇒ false` at that index. Within the bound that is
+*faithful* — no transaction with at most 9 inputs has an input 9, so the covenant really cannot run
+there — so the cut sites are a regression guard, not a defect list: `cutSites` returns every one and
+`tests/whole-system.test.ts` enumerates them. A cut appearing anywhere else means the capacity has
+begun deciding something new; understand what before updating the list.
+
+The one real limitation is the bound itself: transactions with more than 9 inputs or 11 outputs are
+not examined. Batching is covered inside the bound, but a loan operation takes four or five inputs, so
+most two-operation batches do not fit — widening the capacity is the only thing that deepens it.
 
 ## Scope boundary (what this tool does NOT check)
 
 Only the capability-leak invariant; everything else (BCH values, token/interest math, dust, timelocks,
-signatures, arithmetic, commitment contents beyond the function-identifier byte) is deliberately
+signatures, arithmetic, commitment contents beyond the leading byte and length) is deliberately
 abstracted away and covered by sibling tools. Don't add functional-correctness checks here — see the
 README's Scope section and `docs/scope.md` for why the omissions are sound and where each concern lives.

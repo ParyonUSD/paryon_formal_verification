@@ -22,6 +22,14 @@ function addStructure(z3: Z3, out: Bool[], slots: Utxo[]): void {
     out.push(utxo.category.ge(0), utxo.category.le(MAX_CATEGORY));
     out.push(utxo.script.ge(0), utxo.script.le(MAX_SCRIPT));
     out.push(utxo.commitmentLength.ge(0), utxo.commitmentLength.le(MAX_COMMITMENT_LENGTH));
+    out.push(utxo.commitmentHead.ge(0), utxo.commitmentHead.le(0xff));
+    // An empty commitment has no first byte and reads as the integer 0; a one-byte commitment's int
+    // reading IS its byte, sign-magnitude (0x81 reads as -1, 0x80 as 0).
+    out.push(z3.Implies(utxo.commitmentLength.eq(0), z3.And(utxo.commitment.eq(0), utxo.commitmentHead.eq(0))));
+    out.push(z3.Implies(
+      utxo.commitmentLength.eq(1),
+      utxo.commitment.eq(z3.If(utxo.commitmentHead.ge(0x80), utxo.commitmentHead.neg().add(0x80), utxo.commitmentHead)),
+    ));
 
     const hasNft = utxo.capability.ge(Capability.IMMUTABLE);
     const hasToken = z3.Or(hasNft, utxo.fts.gt(0));
@@ -52,6 +60,35 @@ function addStructure(z3: Z3, out: Bool[], slots: Utxo[]): void {
   });
 }
 
+/**
+ * Outpoint structure for the inputs (outputs have no outpoint).
+ *
+ * Two facts, both faithful:
+ *  - an outpoint index is a non-negative output index;
+ *  - no transaction spends the same outpoint twice, so the (txid, index) pairs of the present inputs
+ *    are pairwise distinct.
+ *
+ * The txid is modelled as an equality-only identity bounded to `0 .. nIn-1`. The covenants only ever
+ * compare two inputs' `outpointTransactionHash` to each other, so all that is observable is the
+ * partition of the inputs into "came from the same transaction" classes, and every partition of n
+ * inputs is realisable with n values: the bound excludes no transaction the model can distinguish.
+ * The index is left unbounded above so a contract comparing it against any value stays modelled.
+ */
+function addOutpointRules(z3: Z3, out: Bool[], tx: SymbolicTx): void {
+  const inputs = tx.inputs;
+  inputs.forEach((utxo, i) => {
+    out.push(utxo.outpointIndex.ge(0));
+    out.push(utxo.outpointTx.ge(0), utxo.outpointTx.le(Math.max(inputs.length - 1, 0)));
+    for (let j = 0; j < i; j++) {
+      const other = inputs[j]!;
+      out.push(z3.Implies(
+        z3.And(utxo.present, other.present),
+        z3.Or(utxo.outpointTx.neq(other.outpointTx), utxo.outpointIndex.neq(other.outpointIndex)),
+      ));
+    }
+  });
+}
+
 function isCat(utxo: Utxo, cat: number): Bool {
   return utxo.category.eq(cat);
 }
@@ -77,9 +114,13 @@ function capOfCat(z3: Z3, utxo: Utxo, cat: number, capability: number): Bool {
  * A minting input lifts all four for that category (unlimited NFTs of any
  * capability), so such contracts must instead bound their outputs explicitly.
  *
- * Genesis note: a brand-new category can be minted by an input whose outpoint
- * index is 0. We do not model outpoints; we assume no analysed transaction
- * genesis-creates a privileged category (their ids are historical/unforgeable).
+ * Genesis note: a brand-new category can be minted by an input whose outpoint index is 0, and its id
+ * is that input's outpoint transaction hash. Outpoints ARE modelled now, and a contract that mints
+ * this way states the precondition itself — `LoanKeyFactory.create` compiles
+ * `require(tx.inputs[0].outpointIndex == 0)` to `OP_0 OP_OUTPOINTINDEX OP_0 OP_NUMEQUALVERIFY`, which
+ * the model decides exactly — so the tally needs no genesis rule of its own. What remains assumed is
+ * that no analysed transaction genesis-creates a *privileged* category: their ids are historical, so
+ * an input's outpoint transaction hash colliding with one is not a transaction anyone can build.
  *
  * Fungible-token conservation is intentionally omitted: fungible tokens carry no
  * capability, so they are irrelevant to leak-freedom (a separate property).
@@ -163,6 +204,7 @@ export function consensusRules(z3: Z3, tx: SymbolicTx, categories: number[]): Bo
   const out: Bool[] = [];
   addStructure(z3, out, tx.inputs);
   addStructure(z3, out, tx.outputs);
+  addOutpointRules(z3, out, tx);
   addTokenTally(z3, out, tx, categories);
   addImmutableMatching(z3, out, tx, categories);
   return out;

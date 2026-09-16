@@ -45,7 +45,7 @@ export interface Generated {
   lockingScript: ScriptOps;
 }
 
-type Kind = 'cat' | 'bc' | 'commit' | 'num';
+type Kind = 'cat' | 'bc' | 'commit' | 'num' | 'outpoint' | 'capsuffix' | 'commithead';
 
 // Stack effect of the plain stack opcodes we emit.
 const DELTA: Partial<Record<number, number>> = {
@@ -150,7 +150,69 @@ export function generateScript(cfg: GenConfig): Generated {
     emit(side === 'in' ? Op.OP_UTXOBYTECODE : Op.OP_OUTPUTBYTECODE, 0);
   };
 
+  /**
+   * An input's outpoint transaction hash. The model holds it as a per-input identity int, so equality
+   * between two of them is exact in both directions (this is the adjacency check `Loan.interact` and
+   * `LoanTokenSidecar.attach` authenticate their partner with).
+   */
+  const outpointOperand = (): void => {
+    const i = inIdx();
+    if (i === cfg.activeIndex && rng.bool(0.3)) emit(Op.OP_INPUTINDEX, 1); else pushNum(i);
+    emit(Op.OP_OUTPOINTTXHASH, 0);
+  };
+
+  // Slots that actually carry a token: `tokenCategory.split(32)` is a split past the end (a VM error)
+  // on a slot without one, so exact mode only takes the capability suffix of these.
+  const tokenSlots = (side: 'in' | 'out'): number[] => {
+    const slots = side === 'in' ? ctx.inputs : ctx.outputs;
+    return slots.flatMap((slot, i) => (slot.category !== NO_CATEGORY ? [i] : []));
+  };
+  const hasTokenSlot = (): boolean => !exact || tokenSlots('in').length + tokenSlots('out').length > 0;
+
+  /**
+   * The capability suffix `tokenCategory.split(32)[1]`: the empty string for a bare category, 0x01 for
+   * mutable, 0x02 for minting. The model decides it exactly (it is the suffix class), and
+   * `Borrowing.borrow` authenticates its prepared loanKey with it.
+   */
+  const capSuffixOperand = (): void => {
+    const side = rng.bool() ? 'in' : 'out';
+    const candidates = exact ? tokenSlots(side) : [];
+    const i = exact
+      ? (candidates.length > 0 ? rng.pick(candidates) : rng.pick(tokenSlots(side === 'in' ? 'out' : 'in')))
+      : (side === 'in' ? inIdx() : outIdx());
+    const useOut = exact && candidates.length === 0 ? side === 'in' : side === 'out';
+    pushNum(i);
+    emit(useOut ? Op.OP_OUTPUTTOKENCATEGORY : Op.OP_UTXOTOKENCATEGORY, 0);
+    pushNum(32); emit(Op.OP_SPLIT, 0); emit(Op.OP_NIP);
+  };
+  /** A constant the capability suffix is compared against (`0x`, `0x01`, `0x02`, or a non-suffix). */
+  const capSuffixConst = (): void => {
+    const r = rng.next();
+    if (r < 0.35) { emit(Op.OP_0, 1); return; }
+    if (r < 0.65) { pushData(Uint8Array.of(Capability.MUTABLE)); return; }
+    if (r < 0.95) { pushData(Uint8Array.of(Capability.MINTING)); return; }
+    pushData(Uint8Array.of(3 + rng.int(200))); // the suffix of no tokenCategory: always false
+  };
+
+  /**
+   * A commitment field with something appended — `nftCommitment + 0x05`, the shape every state update
+   * in the contracts builds. The model keeps only an int reading, a length and a first byte, so the
+   * comparison is a *necessary* condition rather than an exact one and this construct belongs to the
+   * wide (soundness-only) subset: what it checks is that the model never rejects what the VM accepts,
+   * which is exactly how an over-eager first byte would show up (the field may be empty at run time,
+   * and then the first byte is the appended constant's).
+   */
+  const commitConcatOperand = (): void => {
+    const side = rng.bool() ? 'in' : 'out';
+    pushNum(side === 'in' ? inIdx() : outIdx());
+    emit(side === 'in' ? Op.OP_UTXOTOKENCOMMITMENT : Op.OP_OUTPUTTOKENCOMMITMENT, 0);
+    pushData(minimalCommitment(rng));
+    emit(Op.OP_CAT, -1);
+    if (rng.bool(0.3)) { pushNum(1); emit(Op.OP_SPLIT, 0); emit(Op.OP_DROP); } // ...and its first byte
+  };
+
   const commitOperand = (forceField = false): void => {
+    if (!forceField && wide(0.25)) { commitConcatOperand(); return; }
     if (!forceField && rng.bool(0.4)) {
       if (wide(0.3)) { // opaque content of a known length
         pushNum(rng.int(300)); pushNum(1 + rng.int(4)); emit(Op.OP_NUM2BIN, -1);
@@ -164,7 +226,36 @@ export function generateScript(cfg: GenConfig): Generated {
     const side = rng.bool() ? 'in' : 'out';
     pushNum(side === 'in' ? inIdx() : outIdx());
     emit(side === 'in' ? Op.OP_UTXOTOKENCOMMITMENT : Op.OP_OUTPUTTOKENCOMMITMENT, 0);
-    if (wide(0.3)) { pushNum(1); emit(Op.OP_SPLIT, 0); emit(Op.OP_DROP); } // first byte (opaque to the model)
+    if (wide(0.3)) { pushNum(1); emit(Op.OP_SPLIT, 0); emit(Op.OP_DROP); } // first byte
+  };
+
+  // Slots whose commitment has a first byte at all: `nftCommitment.split(1)` is a VM error otherwise.
+  const headSlots = (side: 'in' | 'out'): number[] => {
+    const slots = side === 'in' ? ctx.inputs : ctx.outputs;
+    return slots.flatMap((slot, i) => (slot.commitment.length >= 1 ? [i] : []));
+  };
+  const hasHeadSlot = (): boolean => !exact || headSlots('in').length + headSlots('out').length > 0;
+
+  /**
+   * The commitment's leading identifier byte, `nftCommitment.split(1)[0]` — how every covenant tells a
+   * price contract (0x00) from a loan (0x01) from a function NFT (0x02..0x08). The model carries the
+   * byte, so the comparison decides exactly.
+   */
+  const commitHeadOperand = (): void => {
+    const sides: ('in' | 'out')[] = exact
+      ? (['in', 'out'] as const).filter((side) => headSlots(side).length > 0)
+      : ['in', 'out'];
+    const side = rng.pick(sides);
+    const i = exact ? rng.pick(headSlots(side)) : (side === 'in' ? inIdx() : outIdx());
+    pushNum(i);
+    emit(side === 'in' ? Op.OP_UTXOTOKENCOMMITMENT : Op.OP_OUTPUTTOKENCOMMITMENT, 0);
+    pushNum(1); emit(Op.OP_SPLIT, 0); emit(Op.OP_DROP);
+  };
+  /** A single byte the leading identifier is compared against (often one a slot actually carries). */
+  const commitHeadConst = (): void => {
+    const slots = [...ctx.inputs, ...ctx.outputs].filter((slot) => slot.commitment.length >= 1);
+    if (slots.length > 0 && rng.bool(0.6)) { pushData(Uint8Array.of(rng.pick(slots).commitment[0]!)); return; }
+    pushData(Uint8Array.of(rng.int(9)));
   };
 
   /** Pushes a number; returns whether it is symbolic to the model (a count) or a plain constant. */
@@ -177,7 +268,7 @@ export function generateScript(cfg: GenConfig): Generated {
     if (wide(0.3)) { opaqueNum(); return false; }
     // Counts, satoshi values, fungible amounts, and the byte lengths of commitments and categories are
     // all model Ints (exact in comparisons).
-    switch (rng.int(7)) {
+    switch (rng.int(9)) {
       case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); break;
       case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); break;
       case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); break;
@@ -196,6 +287,17 @@ export function generateScript(cfg: GenConfig): Generated {
         emit(Op.OP_SIZE, 1); emit(Op.OP_NIP);
         break;
       }
+      case 6: {
+        // An input's outpoint index, optionally shifted by one: the model resolves both exactly, so
+        // `inputs[k].outpointIndex == inputs[i].outpointIndex + 1` decides in both directions.
+        const i = inIdx();
+        if (i === cfg.activeIndex && rng.bool(0.3)) emit(Op.OP_INPUTINDEX, 1); else pushNum(i);
+        emit(Op.OP_OUTPOINTINDEX, 0);
+        if (rng.bool(0.4)) emit(rng.bool() ? Op.OP_1ADD : Op.OP_1SUB, 0);
+        else if (rng.bool(0.3)) { pushNum(1 + rng.int(3)); emit(rng.bool() ? Op.OP_ADD : Op.OP_SUB, -1); }
+        break;
+      }
+      case 7: outpointOperand(); emit(Op.OP_SIZE, 1); emit(Op.OP_NIP); break; // always 32
       default: emit(rng.bool() ? Op.OP_TXOUTPUTCOUNT : Op.OP_TXINPUTCOUNT, 1); break;
     }
     return true;
@@ -285,10 +387,16 @@ export function generateScript(cfg: GenConfig): Generated {
     } else {
       // Two constant commitments compare to nothing in the model (only fields carry a commitment), so exact
       // mode keeps a field on one side; categories and bytecode constants are modelled, so they need no such care.
-      const operand = kind === 'cat' ? catOperand : kind === 'bc' ? bcOperand : () => commitOperand(exact);
+      const operand = kind === 'cat' ? catOperand : kind === 'bc' ? bcOperand
+        : kind === 'outpoint' ? outpointOperand : kind === 'capsuffix' ? capSuffixOperand
+          : kind === 'commithead' ? commitHeadOperand : () => commitOperand(exact);
       const other = wide(0.15)
-        ? rng.pick([catOperand, bcOperand, () => commitOperand(), junk]) // mismatched kinds: opaque to the model
-        : (kind === 'commit' ? () => commitOperand() : operand);
+        // mismatched kinds: opaque to the model
+        ? rng.pick([catOperand, bcOperand, outpointOperand, () => commitOperand(), junk])
+        : kind === 'commit' ? () => commitOperand()
+          : kind === 'capsuffix' ? (rng.bool(0.7) ? capSuffixConst : capSuffixOperand)
+            : kind === 'commithead' ? (rng.bool(0.7) ? commitHeadConst : commitHeadOperand)
+              : operand;
       const [a, b] = rng.bool() ? [operand, other] : [other, operand];
       pattern.arrange(a, b);
       if (verify && rng.bool()) emit(Op.OP_EQUALVERIFY, -2);
@@ -330,7 +438,15 @@ export function generateScript(cfg: GenConfig): Generated {
       junk(); emit(Op.OP_EQUAL, -1);
       return false;
     }
-    const kinds: Kind[] = exact && !positive ? ['cat', 'cat', 'num'] : ['cat', 'cat', 'bc', 'bc', 'commit', 'num'];
+    // Outpoint, category and capability-suffix identities are exact under negation too; script ids
+    // and commitments are not.
+    const suffix: Kind[] = hasTokenSlot() ? ['capsuffix'] : [];
+    // The leading identifier byte is exact, but only as a *requirement*: like every commitment
+    // comparison it is a necessary condition for byte equality, so exact mode keeps it positive.
+    const head: Kind[] = hasHeadSlot() && positive ? ['commithead'] : [];
+    const kinds: Kind[] = exact && !positive
+      ? ['cat', 'cat', 'num', 'outpoint', ...suffix]
+      : ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint', ...suffix, ...head];
     return compare(rng.pick(kinds), false);
   };
 
@@ -357,7 +473,13 @@ export function generateScript(cfg: GenConfig): Generated {
       emit(Op.OP_VERIFY, -1);
       return;
     }
-    if (r < 0.7) { compare(rng.pick<Kind>(['cat', 'cat', 'bc', 'bc', 'commit', 'num']), true); return; }
+    if (r < 0.7) {
+      const kinds: Kind[] = ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint'];
+      if (hasTokenSlot()) kinds.push('capsuffix');
+      if (hasHeadSlot()) kinds.push('commithead');
+      compare(rng.pick(kinds), true);
+      return;
+    }
     boolExpr(2); emit(Op.OP_VERIFY, -1);
   };
   const block = (depth: number): void => { const n = 1 + rng.int(2); for (let k = 0; k < n; k++) statement(depth); };

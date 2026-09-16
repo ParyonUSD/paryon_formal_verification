@@ -17,9 +17,12 @@ export const CAT = {
   POOL: 2, // internal authority (stabilityPool minting, collector mutable, receipts immutable)
   REDEEMER: 3, // internal authority (redeemer minting, redemption mutable) == redemptionTokenId
   LOANKEY_FACTORY: 4, // internal authority (the loanKey factory minting NFT)
-  // per-loan loanKey categories — user-facing (the minting loanKey is held by the user)
-  LOANKEY: 10,
-  LOANKEY_2: 11, // a second loan's key (swap templates involve two loans)
+  // Two user-facing categories the tally is also enforced over, so that the model carries non-internal
+  // categories whose NFTs a transaction can move around (a per-loan loanKey is the real example, and a
+  // transaction can involve two loans). Their ids are arbitrary and nothing privileged owns them; what
+  // they add is a tallied category the attacker is free to use.
+  USER_1: 10,
+  USER_2: 11,
 } as const;
 
 /** Locking-script ids (>= Script.FIRST_COVENANT are system covenants). */
