@@ -44,12 +44,16 @@ export interface InterpretStats {
   /** Highest output index any introspection opcode read on any path, or -1. */
   maxOutputIndex: number;
   /**
-   * How many times a path read an input/output index at or beyond the model's capacity and was
-   * therefore dropped. Within the bounded model (transactions with at most `nInputs` inputs and
-   * `nOutputs` outputs) no such field exists, so dropping the path is faithful *for that bound*;
-   * a non-zero count means the bound, not the contracts, decided something, so builders report it.
+   * Every read of an input/output index at or beyond the model's capacity, which dropped the path
+   * that made it.
+   *
+   * Within the bounded model — transactions with at most `nInputs` inputs and `nOutputs` outputs — no
+   * such field exists, so dropping the path is faithful *for that bound*. But a dropped path turns
+   * `script == S => OR(paths)` into `script == S => false` at that index, which is a hole in the proof
+   * by construction, so this is not a diagnostic: a builder must surface every entry and a test must
+   * enumerate the ones it accepts, with the argument for why that shape is outside the bound.
    */
-  outOfCapacity?: number;
+  beyondCapacity?: { side: 'in' | 'out'; index: number }[];
 }
 
 export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: InterpretOptions): Path[] {
@@ -107,17 +111,22 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
     // capacity names one this bounded model does not carry: either way the path cannot occur here,
     // so it is pruned. Prunings of the second kind are counted so a builder can report that its
     // capacity — not the contract — cut a path.
+    const beyond = (side: 'in' | 'out', index: number): void => {
+      if (!opts.stats) return;
+      const seen = (opts.stats.beyondCapacity ??= []);
+      if (!seen.some((r) => r.side === side && r.index === index)) seen.push({ side, index });
+    };
     const inSlot = (v: SVal): number => {
       const i = toIndex(v);
       if (i >= 0 && i < tx.inputs.length) return i;
-      if (i >= tx.inputs.length && opts.stats) opts.stats.outOfCapacity = (opts.stats.outOfCapacity ?? 0) + 1;
+      if (i >= tx.inputs.length) beyond('in', i);
       feasible = false;
       return 0; // a safe placeholder: the path is discarded, its constraints never reach a solver
     };
     const outSlot = (v: SVal): number => {
       const i = outIndex(v);
       if (i >= 0 && i < tx.outputs.length) return i;
-      if (i >= tx.outputs.length && opts.stats) opts.stats.outOfCapacity = (opts.stats.outOfCapacity ?? 0) + 1;
+      if (i >= tx.outputs.length) beyond('out', i);
       feasible = false;
       return 0;
     };

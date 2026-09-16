@@ -37,13 +37,13 @@ beforeAll(async () => {
     registry: LOAN_SUBSYSTEM_REGISTRY,
     unmodelledScripts: unmodelledCovenantScripts(LOAN_SUBSYSTEM_REGISTRY),
   });
-  const { interpretations, totalPaths, deadSites, outOfCapacity, maxOutputIndex, interpretMs } = built.stats;
-  // Not an assertion, a measurement: `deadSites` are (function, index) pairs the contracts' own
-  // `require(this.activeInputIndex == K)` rules out, and `outOfCapacity` is where the *bound* — not a
-  // contract — cut a path, which is exactly what a reader of a bounded proof needs to know.
+  const { interpretations, totalPaths, deadSites, maxOutputIndex, interpretMs } = built.stats;
+  // A measurement, not an assertion: `deadSites` are the (function, index) pairs the contracts' own
+  // `require(this.activeInputIndex == K)` rules out, which is the model working as intended. The
+  // capacity cuts below are the ones that need an argument, so they are asserted instead.
   console.log(
     `whole-system build: ${interpretations} interpretations in ${interpretMs}ms, ${totalPaths} paths, `
-    + `${deadSites} dead sites, ${outOfCapacity} paths cut by the capacity, max output index ${maxOutputIndex}`,
+    + `${deadSites} dead sites, max output index ${maxOutputIndex}`,
   );
 });
 
@@ -59,6 +59,19 @@ function registeredFunctions(): { script: number; abiIndex: number; name: string
 }
 
 describe('whole-system loan subsystem — no transaction template', () => {
+  it('the capacity cuts exactly the sites it is known to cut', () => {
+    // Where the *bound*, not a contract, pruned a path: the build then concludes that covenant cannot
+    // sit at that index, which is a hole unless the shape is genuinely outside the bound. It is here.
+    // `Loan.interact` reads its sidecar at `activeInputIndex + 1` and its function NFT at
+    // `activeInputIndex + 2`, so a loan at input 6 or 7 needs a 9th or 10th input — more than this
+    // build carries. Every canonical loan operation places the loan at input 0, 1 or 6, so none is
+    // lost; what is outside the proof is a transaction with a loan that late in a longer input list.
+    expect(built.cutSites.map((site) => `${site.name}@${site.index} (${site.reads.join(',')})`)).toEqual([
+      'Loan.interact@6 (in8)', // its function NFT would be at input 8
+      'Loan.interact@7 (in8)', // its sidecar would be at input 8 (execution stops there)
+    ]);
+  });
+
   it('is satisfiable (the model is not vacuously over-constrained)', async () => {
     const { verdict, report } = await decideWhole(built, 'base');
     expect(verdict, report).toBe('sat');

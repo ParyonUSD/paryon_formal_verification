@@ -71,12 +71,28 @@ export interface WholeSystemStats {
   totalPaths: number;
   /** Interpretations that produced no path at all (the function cannot run at that index). */
   deadSites: number;
-  /** Paths dropped because they read an index beyond the model's capacity. */
-  outOfCapacity: number;
   /** Highest output index any covenant read at any index. */
   maxOutputIndex: number;
   /** Wall-clock milliseconds spent interpreting. */
   interpretMs: number;
+}
+
+/**
+ * A (covenant, function, index) site where the *capacity*, not the contract, pruned a path: the
+ * function read a UTXO index the build does not carry.
+ *
+ * This is a hole in the proof by construction — `script == S => OR(paths)` collapses to
+ * `script == S => false` at that index, so the build concludes that covenant cannot sit there — and
+ * whether that is acceptable depends on an argument about the bound, not on anything the model can
+ * check. So every one is surfaced and the tests enumerate the set they accept.
+ */
+export interface CutSite {
+  script: number;
+  abiIndex: number;
+  name: string;
+  index: number;
+  /** The out-of-capacity reads that pruned it, as `in9` / `out11`. */
+  reads: string[];
 }
 
 export interface BuiltWholeSystem {
@@ -95,12 +111,15 @@ export interface BuiltWholeSystem {
   /** "Some input runs this function": its script at that index AND one of its paths there. */
   runsSomewhere(script: number, abiIndex: number): Bool;
   sites: FunctionSite[];
+  /** Sites the capacity pruned; see {@link CutSite}. A test must enumerate the accepted set. */
+  cutSites: CutSite[];
   stats: WholeSystemStats;
 }
 
 export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSystem {
   const tx = declareTx(z3, cfg.nInputs, cfg.nOutputs);
-  const stats: InterpretStats = { maxOutputIndex: -1, outOfCapacity: 0 };
+  const stats: InterpretStats = { maxOutputIndex: -1 };
+  const cutSites: CutSite[] = [];
   const startedAt = Date.now();
 
   const sites: FunctionSite[] = [];
@@ -119,12 +138,23 @@ export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSyst
     for (let i = 0; i < cfg.nInputs; i++) {
       const perFunction: Bool[] = [];
       for (const abiIndex of abiIndices) {
+        // Per-site stats so a capacity-pruned path can be attributed to the site that made the read;
+        // `maxOutputIndex` is merged back into the build-wide figure the free-slot guard uses.
+        const siteStats: InterpretStats = { maxOutputIndex: -1 };
         const paths = interpret(z3, tx, code, {
           activeIndex: i,
           initialStack: initialStackFor(entry, abiIndex),
-          stats,
+          stats: siteStats,
           ...(cfg.maxPathsPerFunction === undefined ? {} : { maxPaths: cfg.maxPathsPerFunction }),
         });
+        stats.maxOutputIndex = Math.max(stats.maxOutputIndex, siteStats.maxOutputIndex);
+        const name = `${entry.artifact.contractName}.${entry.artifact.abi[abiIndex]?.name ?? abiIndex}`;
+        if (siteStats.beyondCapacity !== undefined) {
+          cutSites.push({
+            script: scriptId, abiIndex, index: i, name,
+            reads: siteStats.beyondCapacity.map((r) => `${r.side}${r.index}`).sort(),
+          });
+        }
         // A disjunction of conjunctions, never a cartesian product of solvers: one build decides
         // everything, and the solver picks the branch.
         const reachable = any(z3, paths.map((path) => z3.And(...path.constraints)));
@@ -135,10 +165,7 @@ export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSyst
         definitions.push(z3.Eq(indicator, z3.And(tx.inputs[i]!.script.eq(scriptId), reachable)));
         perFunction.push(indicator);
         runs.get(key(scriptId, abiIndex))!.push(indicator);
-        sites.push({
-          script: scriptId, abiIndex, index: i, paths: paths.length, selector,
-          name: `${entry.artifact.contractName}.${entry.artifact.abi[abiIndex]?.name ?? abiIndex}`,
-        });
+        sites.push({ script: scriptId, abiIndex, index: i, paths: paths.length, selector, name });
         totalPaths += paths.length;
       }
       // No function of S can run at index i (every one pins a different index) => S is not there.
@@ -178,11 +205,11 @@ export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSyst
     keepAlive,
     runsSomewhere: (script, abiIndex) => any(z3, runs.get(key(script, abiIndex)) ?? []),
     sites,
+    cutSites,
     stats: {
       interpretations: sites.length,
       totalPaths,
       deadSites: sites.filter((site) => site.paths === 0).length,
-      outOfCapacity: stats.outOfCapacity ?? 0,
       maxOutputIndex: stats.maxOutputIndex,
       interpretMs,
     },
