@@ -42,6 +42,37 @@ Each is a real subtlety the hand model papered over:
   state etc.) is split/reconstructed opaquely. Pinning the function ids is what lets the recreation
   partners pick the right output index instead of forking into a spurious branch.
 
+## What the libauth oracle forced us to get right
+
+`tests/oracle-interpreter.test.ts` runs random covenant-shaped scripts through libauth's VM and the
+symbolic interpreter side by side (see README, "Checked against libauth"). Building it surfaced:
+
+- **Class identities are not exact identities.** `ATTACKER` stands for every user script, `BURN` for
+  every nulldata, and one covenant id for every instance of that contract; a commitment int identifies
+  several byte strings (`0x` and `0x00` both read as 0). So `out.bytecode == <p2pkh>` ⇒ `out.script
+  == ATTACKER` holds, but not the converse, and asserting the converse under `OP_NOT` / in an else
+  branch would *exclude* real transactions — an unsoundness the superset argument does not see.
+  `capability.ts` therefore marks such equalities *lossy*, and the interpreter is polarity-aware: a
+  lossy predicate is asserted where the script requires it true (`OP_VERIFY`, the taken side of a
+  branch), conjunctions/disjunctions inherit the mark, and its negation is never asserted (`OP_NOT`
+  and the untaken side of a branch contribute nothing). Category equality needs no such treatment
+  (category ids and the suffix class are exact), which is why it stays exact under negation. (A first
+  attempt encoded the same thing as `necessary ∧ fresh-free-boolean`; semantically identical, but the
+  extra free booleans sent Z3's pseudo-boolean theory into a multi-gigabyte blow-up on the manage
+  regression build, so the polarity encoding is the one that stays.)
+- **A capability suffix on a raw `tokenCategory` field.** `paryonTokenId + 0x01` where
+  `paryonTokenId` is the active input's category is a category string only if that field was bare
+  (32 bytes); an empty or already-suffixed base gives a 1- or 34-byte string that equals no category,
+  though two such strings can equal *each other*. The suffix class therefore encodes the full
+  structure (classes 4..9 in `APPEND_CLASS`, next to the four introspection classes), so the equality
+  decides exactly instead of being dropped — dropping it loses the price/loan authentication in
+  `manage`, which the historical-leak regression test caught, and collapsing the non-category cases
+  into one class made `0x + 02` equal `0x + 01`, which the oracle caught.
+- **Concrete truth values.** `OP_NOT`, `OP_BOOLAND`, `OP_BOOLOR` and `OP_0NOTEQUAL` on concrete byte
+  strings now use the VM's truthiness (CScriptNum non-zero; negative zero is false) instead of going
+  opaque, and commitment constants beyond the exact-integer range carry no constraint rather than
+  crashing the interpreter.
+
 ## Coverage of the artifact derivation
 
 Every covenant is now derived from artifact bytecode — there are **no hand-modelled covenants left**.

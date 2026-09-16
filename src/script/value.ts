@@ -35,7 +35,12 @@ export type SVal =
   | { k: 'outpoint'; i: number } // an input's outpoint txhash: opaque alone, a genesis category base when concatenated with a capability byte
   | { k: 'seed'; seed: Seed }
   | { k: 'num'; e: Num | null }
-  | { k: 'bool'; e: Bool | null }
+  /**
+   * A truth value. `e` is its Z3 predicate (null = unknown). `lossy` marks a predicate that is only a
+   * *necessary* condition for the real comparison (see capability.ts): it may be asserted where the
+   * script requires the value true, but its negation must never be asserted.
+   */
+  | { k: 'bool'; e: Bool | null; lossy?: boolean }
   | { k: 'opaque' };
 
 export const OPAQUE: SVal = { k: 'opaque' };

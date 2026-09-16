@@ -47,6 +47,19 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
     throw new Error(`cannot resolve index from ${v.k}`);
   }
 
+  /**
+   * The VM's truth value of a stack item: a resolved predicate as-is (keeping its lossy mark), a
+   * concrete byte string by its CScriptNum reading (any non-zero number, so negative zero is false),
+   * anything else unknown (null). Byte strings beyond the exact integer range are treated as unknown.
+   */
+  type Truth = { e: Bool | null; lossy: boolean };
+  const truth = (v: SVal): Truth => {
+    if (v.k === 'bool') return { e: v.e, lossy: v.lossy === true };
+    if (v.k === 'bytes') return { e: v.v.length <= 6 ? z3.Bool.val(bytesToNum(v.v) !== 0) : null, lossy: false };
+    return { e: null, lossy: false };
+  };
+  const boolVal = (t: Truth): SVal => ({ k: 'bool', e: t.e, ...(t.lossy ? { lossy: true } : {}) });
+
   // ---- per-path execution ----
   const paths: Path[] = [];
 
@@ -101,27 +114,31 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         case Op.OP_NUM2BIN: { pop(); pop(); push(OPAQUE); break; }
 
         // comparisons — capability content is decided by the abstraction layer
-        case Op.OP_EQUAL: { const b = pop(), a = pop(); push({ k: 'bool', e: cap.equalConstraint(a, b) }); break; }
+        case Op.OP_EQUAL: { const b = pop(), a = pop(); push(boolVal(cap.equalConstraint(a, b))); break; }
         case Op.OP_EQUALVERIFY: {
-          const b = pop(), a = pop(); const c = cap.equalConstraint(a, b); if (c) cons.push(c); break;
+          const b = pop(), a = pop(); const c = cap.equalConstraint(a, b).e; if (c) cons.push(c); break;
         }
         case Op.OP_NUMEQUAL: { const b = pop(), a = pop(); push(cap.numEqResult(a, b)); break; }
         case Op.OP_NUMEQUALVERIFY: { const b = pop(), a = pop(); verify(cap.numEqResult(a, b)); break; }
         case Op.OP_LESSTHANOREQUAL: case Op.OP_GREATERTHANOREQUAL:
         case Op.OP_LESSTHAN: case Op.OP_GREATERTHAN: { const b = pop(), a = pop(); push(cap.compare(op, b, a)); break; }
-        case Op.OP_NOT: { const v = pop(); push({ k: 'bool', e: v.k === 'bool' && v.e ? z3.Not(v.e) : null }); break; }
-        case Op.OP_0NOTEQUAL: { pop(); push({ k: 'bool', e: null }); break; }
+        // The negation of a lossy (necessary-only) predicate is unknown; conjunction and disjunction of
+        // necessary conditions are necessary conditions, so they stay resolved and inherit the mark.
+        case Op.OP_NOT: {
+          const t = truth(pop());
+          push(boolVal({ e: t.e && !t.lossy ? z3.Not(t.e) : null, lossy: false }));
+          break;
+        }
+        case Op.OP_0NOTEQUAL: { push(boolVal(truth(pop()))); break; }
         case Op.OP_BOOLAND: {
-          const b = pop(), a = pop();
-          const both = a.k === 'bool' && a.e && b.k === 'bool' && b.e;
-          push({ k: 'bool', e: both ? z3.And(a.e as Bool, b.e as Bool) : null });
+          const b = truth(pop()), a = truth(pop());
+          push(boolVal({ e: a.e && b.e ? z3.And(a.e, b.e) : null, lossy: a.lossy || b.lossy }));
           break;
         }
         case Op.OP_BOOLOR: {
           // Disjunction of capability comparisons (e.g. `out.cat == 0x || out.cat == paryon`).
-          const b = pop(), a = pop();
-          const both = a.k === 'bool' && a.e && b.k === 'bool' && b.e;
-          push({ k: 'bool', e: both ? z3.Or(a.e as Bool, b.e as Bool) : null });
+          const b = truth(pop()), a = truth(pop());
+          push(boolVal({ e: a.e && b.e ? z3.Or(a.e, b.e) : null, lossy: a.lossy || b.lossy }));
           break;
         }
 
@@ -179,14 +196,16 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
           const cond = pop();
           const isIf = op === Op.OP_IF;
           const { elseStart, endIp } = scanBranch(script, i);
-          const condE = cond.k === 'bool' ? cond.e : null;
+          const condT = cond.k === 'bool' ? truth(cond) : { e: null, lossy: false };
           const go = (condValue: boolean): void => {
             const branchDecided = new Map(decided);
             branchDecided.set(cond, condValue);
             const c2 = cons.slice();
-            // When the condition is a real predicate (e.g. an output-count compare),
-            // assert it on the taken path so the path is consistent with the branch.
-            if (condE) c2.push(condValue ? condE : z3.Not(condE));
+            // When the condition is a real predicate (e.g. an output-count compare), assert it on the
+            // taken path so the path is consistent with the branch. A lossy predicate is asserted only
+            // on the path where the script requires it true; its negation is never asserted.
+            if (condT.e && condValue) c2.push(condT.e);
+            else if (condT.e && !condT.lossy) c2.push(z3.Not(condT.e));
             const execThen = isIf ? condValue : !condValue;
             run(execThen ? i + 1 : (elseStart ?? endIp), stack.slice(), c2, branchDecided);
           };

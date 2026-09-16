@@ -26,11 +26,39 @@ import { bytesToNum, leadingByte, type SVal } from './value.js';
 // registry'solver category ids and outside the tallied/internal sets — a fresh, user-facing category.
 // (LoanKeyFactory mints one as reservedTokenId + 0x02.)
 const GENESIS_BASE = 20;
+// Suffix classes of a category-like byte string, i.e. what `tokenCategory` (+ an appended capability
+// byte) can serialise to. 0..3 are the introspection results; 4..9 arise only from appending a byte
+// to a non-bare base and equal no introspection result, but two such strings can equal each other.
+//   0: empty          1: bare 32 bytes     2: cat+01          3: cat+02
+//   4: "01" alone     5: "02" alone        6: cat+01+01       7: cat+01+02
+//   8: cat+02+01      9: cat+02+02
+// The class of `base + suffix`, by base class (0..3) and suffix byte (01 / 02):
+const APPEND_CLASS: Record<number, Record<number, number>> = {
+  0: { [Capability.MUTABLE]: 4, [Capability.MINTING]: 5 },
+  1: { [Capability.MUTABLE]: 2, [Capability.MINTING]: 3 },
+  2: { [Capability.MUTABLE]: 6, [Capability.MINTING]: 7 },
+  3: { [Capability.MUTABLE]: 8, [Capability.MINTING]: 9 },
+};
+// Commitment constants longer than this are not read as an integer (the model's commitment abstraction
+// only ever needs the single-byte function identifiers; longer constants fall outside exact-int range).
+const MAX_COMMITMENT_CONST_BYTES = 6;
+
+/**
+ * The result of a modelled equality. `e` is null when the compare cannot move a capability. `lossy`
+ * marks `e` as a *necessary* condition only: a script id stands for a class of scripts (every P2PKH is
+ * ATTACKER, every nulldata is BURN, every instance of a covenant shares its id) and a commitment int
+ * identifies several byte strings (`0x` and `0x00` both read as 0), so `e` is implied by the real byte
+ * equality but does not imply it. The interpreter asserts a lossy `e` only where the script requires
+ * the comparison true; asserting `¬e` (under OP_NOT, or on the untaken side of a branch) would exclude
+ * real transactions — an unsoundness the superset argument does not protect against. Category
+ * equality is exact (category ids and suffix classes are exact identities) and so never lossy.
+ */
+export interface EqualityResult { e: Bool | null; lossy: boolean }
 
 /** Interprets stack values as capability-relevant constraints for a given transaction. */
 export interface CapabilityModel {
-  /** A capability-relevant equality (`OP_EQUAL`/`OP_EQUALVERIFY`), or null when the compare can't move a capability. */
-  equalConstraint(a: SVal, b: SVal): Bool | null;
+  /** A capability-relevant equality (`OP_EQUAL`/`OP_EQUALVERIFY`); see {@link EqualityResult}. */
+  equalConstraint(a: SVal, b: SVal): EqualityResult;
   /** The result of `OP_NUMEQUAL`(`VERIFY`): a count/selector comparison as a bool SVal. */
   numEqResult(a: SVal, b: SVal): SVal;
   /** The result of a numeric ordering compare (`OP_LESSTHAN` etc.) as a bool SVal. */
@@ -40,6 +68,10 @@ export interface CapabilityModel {
 export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number): CapabilityModel {
   const outCount = countPresent(z3, tx, 'out');
   const inCount = countPresent(z3, tx, 'in');
+
+  const exact = (e: Bool): EqualityResult => ({ e, lossy: false });
+  const lossy = (e: Bool): EqualityResult => ({ e, lossy: true });
+  const NONE: EqualityResult = { e: null, lossy: false };
 
   const eqInt = (a: Num | number, b: Num | number): Bool => {
     if (typeof a === 'number' && typeof b === 'number') return z3.Bool.val(a === b);
@@ -68,12 +100,28 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
     if (v.k === 'cat' && v.parts.length === 2) {
       const [a, b] = v.parts;
-      // Base category: either another category view, or a bare outpoint txhash used to
-      // mint a brand-new genesis category (LoanKeyFactory: reservedTokenId + 0x02).
-      const baseCatId = catView(a!)?.catId ?? (a!.k === 'outpoint' ? GENESIS_BASE + a!.i : null);
-      if (baseCatId !== null && b!.k === 'bytes' && b!.v.length === 1) {
-        if (b!.v[0] === Capability.MUTABLE) return { catId: baseCatId, cls: 2 };
-        if (b!.v[0] === Capability.MINTING) return { catId: baseCatId, cls: 3 };
+      // Base category: another category view, or a bare outpoint txhash used to mint a brand-new
+      // genesis category (LoanKeyFactory: reservedTokenId + 0x02). Appending a capability byte yields
+      // a real category string only when the base is *bare* (class 1: a split(32)[0], a tokenId seed,
+      // or a raw field of a UTXO carrying an immutable NFT / fungible-only token); any other base
+      // class maps to one of the non-category classes 4..9 (see APPEND_CLASS), which keeps equality
+      // exact: `0x + 02` equals `0x + 02` but never a category, and never `0x + 01`.
+      const base = catView(a!);
+      const baseCatId = base?.catId ?? (a!.k === 'outpoint' ? GENESIS_BASE + a!.i : null);
+      const suffix = b!.k === 'bytes' && b!.v.length === 1 && (b!.v[0] === Capability.MUTABLE || b!.v[0] === Capability.MINTING)
+        ? b!.v[0] : null;
+      if (baseCatId !== null && suffix !== null) {
+        const baseCls: Num | number = base ? base.cls : 1; // an outpoint txhash is always bare
+        if (typeof baseCls === 'number') {
+          const cls = APPEND_CLASS[baseCls]?.[suffix];
+          return cls === undefined ? null : { catId: baseCatId, cls }; // a doubly-suffixed base: not modelled
+        }
+        // A field's class is always 0..3, so the chain below is total.
+        const cls = [3, 2, 1].reduce<Num>(
+          (acc, c) => z3.If(baseCls.eq(c), z3.Int.val(APPEND_CLASS[c]![suffix]!), acc),
+          z3.Int.val(APPEND_CLASS[0]![suffix]!),
+        );
+        return { catId: baseCatId, cls };
       }
     }
     if (v.k === 'bytes' && v.v.length === 0) return { catId: NO_CATEGORY, cls: 0 };
@@ -114,18 +162,20 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       : v.k === 'field' && v.f === 'outCommit' ? tx.outputs[v.i]!.commitment
         : null;
 
-  function equalConstraint(a: SVal, b: SVal): Bool | null {
+  function equalConstraint(a: SVal, b: SVal): EqualityResult {
     const ca = catView(a), cb = catView(b);
-    if (ca && cb) return eqCategory(ca, cb);
+    if (ca && cb) return exact(eqCategory(ca, cb));
     const sc = eqScript(a, b);
-    if (sc) return sc;
+    if (sc) return lossy(sc); // script ids are class identities
     // Commitment equalities: resolve `commitment == constByte` / `out.commit == in.commit`
-    // so function-NFT identifier branches (and recreations) decide correctly.
+    // so function-NFT identifier branches (and recreations) decide correctly. The int reading of a
+    // commitment is only a necessary condition for byte equality (0x00 and 0x read as the same int),
+    // hence lossy; constants beyond the exact integer range carry no constraint at all.
     const ka = commitExpr(a), kb = commitExpr(b);
-    if (ka !== null && kb !== null) return eqInt(ka, kb);
-    if (ka !== null && b.k === 'bytes') return eqInt(ka, bytesToNum(b.v));
-    if (kb !== null && a.k === 'bytes') return eqInt(kb, bytesToNum(a.v));
-    return null; // value / amount / opaque -> no capability content
+    if (ka !== null && kb !== null) return lossy(eqInt(ka, kb));
+    if (ka !== null && b.k === 'bytes') return b.v.length <= MAX_COMMITMENT_CONST_BYTES ? lossy(eqInt(ka, bytesToNum(b.v))) : NONE;
+    if (kb !== null && a.k === 'bytes') return a.v.length <= MAX_COMMITMENT_CONST_BYTES ? lossy(eqInt(kb, bytesToNum(a.v))) : NONE;
+    return NONE; // value / amount / opaque -> no capability content
   }
 
   function numEqResult(a: SVal, b: SVal): SVal {
