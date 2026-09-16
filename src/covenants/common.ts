@@ -40,8 +40,16 @@ export const PoolFunction = {
 
 export const INTERNAL_CATEGORIES = [CAT.PARYON, CAT.POOL, CAT.REDEEMER, CAT.LOANKEY_FACTORY];
 
-/** Every category id the consensus tally is enforced over. */
-export const LOAN_CATEGORIES = [CAT.PARYON, CAT.POOL, CAT.REDEEMER, CAT.LOANKEY_FACTORY, CAT.LOANKEY, CAT.LOANKEY_2];
+/**
+ * Every category id the consensus tally is enforced over: the four internal authorities plus two
+ * user-facing categories, so the model also carries categories the attacker may move freely. Z3 cannot
+ * range over the unbounded category domain, so the tally is instantiated at these concrete ids; an
+ * output may still take any id in range, and one outside this set is simply untallied (which only
+ * admits more).
+ */
+export const TALLIED_CATEGORIES = [
+  CAT.PARYON, CAT.POOL, CAT.REDEEMER, CAT.LOANKEY_FACTORY, CAT.USER_1, CAT.USER_2,
+];
 
 /** Reusable ownership rules (who rightfully holds each privileged capability). */
 const own = (category: number, capability: number, scripts: number[]): OwnershipRule =>

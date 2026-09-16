@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { LOAN_CATEGORIES, SCRIPT, SYSTEM_POLICY } from '../src/covenants/common.js';
+import { TALLIED_CATEGORIES, SCRIPT, SYSTEM_POLICY } from '../src/covenants/common.js';
 import { SYSTEM_REGISTRY, unmodelledCovenantScripts, type CovenantRegistry } from '../src/covenants/registry.js';
 import { leakWitness } from '../src/policy.js';
 import { buildWholeSystem, type BuiltWholeSystem } from '../src/script/wholeSystem.js';
@@ -37,7 +37,7 @@ function buildWith(
   override(registry);
   return buildWholeSystem(z3, {
     ...CAPACITY,
-    categories: LOAN_CATEGORIES,
+    categories: TALLIED_CATEGORIES,
     policy: SYSTEM_POLICY,
     registry,
     unmodelledScripts: keepUnmodelledInputs ? [] : unmodelledCovenantScripts(registry),

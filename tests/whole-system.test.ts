@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { LOAN_CATEGORIES, SCRIPT, SYSTEM_POLICY } from '../src/covenants/common.js';
+import { TALLIED_CATEGORIES, SCRIPT, SYSTEM_POLICY } from '../src/covenants/common.js';
 import { SYSTEM_REGISTRY, functionName, unmodelledCovenantScripts } from '../src/covenants/registry.js';
 import {
   adjacencyWitness, forgedFunctionNftWitness, leakWitness, preservationWitness, stateShapeWitness,
@@ -35,7 +35,7 @@ beforeAll(async () => {
   z3 = await getContext();
   built = buildWholeSystem(z3, {
     ...CAPACITY,
-    categories: LOAN_CATEGORIES,
+    categories: TALLIED_CATEGORIES,
     policy: SYSTEM_POLICY,
     registry: SYSTEM_REGISTRY,
     unmodelledScripts: unmodelledCovenantScripts(SYSTEM_REGISTRY),
