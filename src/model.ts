@@ -63,6 +63,12 @@ export interface Utxo {
    * everything else treats it opaquely (split/reconstruct contribute no constraint).
    */
   commitment: Num;
+  /**
+   * NFT commitment byte length (0 when there is no NFT). Together with the int reading it makes
+   * commitment identity nearly injective (only negative-zero encodings collide), and it is what
+   * `commitment.length == 1` — the function-NFT shape the covenants authenticate by — talks about.
+   */
+  commitmentLength: Num;
   /** Whether this slot is actually used by the transaction. */
   present: Bool;
 }
@@ -89,6 +95,7 @@ function declareUtxo(z3: Z3, prefix: string, kind: 'in' | 'out', i: number): Utx
     capability: z3.Int.const(name('capability')),
     script: z3.Int.const(name('script')),
     commitment: z3.Int.const(name('commitment')),
+    commitmentLength: z3.Int.const(name('commitmentLength')),
     present: z3.Bool.const(name('present')),
   };
 }

@@ -122,9 +122,14 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         // byte ops
         case Op.OP_CAT: { const b = pop(), a = pop(); push({ k: 'cat', parts: [a, b] }); break; }
         case Op.OP_SPLIT: { const at = toIndex(pop()); const v = pop(); push({ k: 'split', v, at, side: 'L' }); push({ k: 'split', v, at, side: 'R' }); break; }
-        case Op.OP_SIZE: { const v = stack[stack.length - 1]!; void v; push(num(null)); break; }
+        case Op.OP_SIZE: { push(num(cap.lengthOf(stack[stack.length - 1]!))); break; }
         case Op.OP_BIN2NUM: { pop(); push(num(null)); break; }
-        case Op.OP_NUM2BIN: { pop(); pop(); push(OPAQUE); break; }
+        case Op.OP_NUM2BIN: {
+          // Content stays opaque; the length is the (concrete) size argument.
+          const size = pop(); pop();
+          push(size.k === 'bytes' ? { k: 'sized', len: bytesToNum(size.v) } : OPAQUE);
+          break;
+        }
 
         // comparisons — capability content is decided by the abstraction layer
         case Op.OP_EQUAL: { const b = pop(), a = pop(); push(boolVal(cap.equalConstraint(a, b))); break; }
@@ -196,8 +201,8 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         case Op.OP_1ADD: { const v = pop(); push(v.k === 'bytes' ? constBytes(numToBytes(bytesToNum(v.v) + 1)) : num(null)); break; }
         case Op.OP_1SUB: { const v = pop(); push(v.k === 'bytes' ? constBytes(numToBytes(bytesToNum(v.v) - 1)) : num(null)); break; }
         case Op.OP_NEGATE: { pop(); push(num(null)); break; }
-        case Op.OP_HASH160: case Op.OP_HASH256: case Op.OP_SHA256: case Op.OP_RIPEMD160:
-          pop(); push(OPAQUE); break;
+        case Op.OP_HASH160: case Op.OP_RIPEMD160: pop(); push({ k: 'sized', len: 20 }); break;
+        case Op.OP_HASH256: case Op.OP_SHA256: pop(); push({ k: 'sized', len: 32 }); break;
         // CHECKSIG takes (sig, pubkey); CHECKDATASIG takes (sig, message, pubkey).
         case Op.OP_CHECKSIG: pop(); pop(); push({ k: 'bool', e: null }); break;
         case Op.OP_CHECKSIGVERIFY: pop(); pop(); break;

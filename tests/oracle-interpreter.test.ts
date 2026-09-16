@@ -20,8 +20,8 @@ import { getContext, newSolver, type Z3 } from '../src/z3.js';
  *
  * Every case is reproducible from its seed (`ORACLE_SEED`), and the case count scales with
  * `ORACLE_CASES` (default 150 per mode). Z3's wasm heap is never reclaimed within a process, so keep a
- * single run at or below ~1500 cases per mode (3000 exhausts the 2 GB heap); for a larger sweep run
- * several times with different `ORACLE_SEED`s.
+ * single run at or below ~1000 cases per mode (1500 exhausts the 2 GB heap with the commitment-length
+ * model); for a larger sweep run several times with different `ORACLE_SEED`s.
  */
 const CASES = Number(process.env['ORACLE_CASES'] ?? 150);
 const BASE_SEED = Number(process.env['ORACLE_SEED'] ?? 1);

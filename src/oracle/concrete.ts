@@ -214,11 +214,13 @@ export function fixTx(z3: Z3, solver: Z3Solver, tx: SymbolicTx, ctx: ConcreteTx)
       const utxo = concrete[i];
       if (!utxo) {
         solver.add(z3.Not(slot.present), slot.category.eq(NO_CATEGORY), slot.capability.eq(Capability.NONE),
-          slot.script.eq(Script.ATTACKER), slot.commitment.eq(0), slot.fts.eq(0), slot.value.eq(0));
+          slot.script.eq(Script.ATTACKER), slot.commitment.eq(0), slot.commitmentLength.eq(0),
+          slot.fts.eq(0), slot.value.eq(0));
         return;
       }
       solver.add(slot.present, slot.category.eq(utxo.category), slot.capability.eq(utxo.capability),
         slot.script.eq(utxo.script), slot.commitment.eq(commitmentToInt(utxo.commitment)),
+        slot.commitmentLength.eq(utxo.commitment.length),
         slot.fts.eq(Number(utxo.fts)), slot.value.eq(Number(utxo.value)));
     });
   };

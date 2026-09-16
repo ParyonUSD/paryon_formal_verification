@@ -63,8 +63,8 @@ evaluate random concrete transactions and scripts with libauth's BCH VM / token 
 the model to admit whatever libauth accepts (and to agree both ways on the exact subset). Any change to
 `interpreter.ts`, `capability.ts`, `consensus.ts` or `value.ts` must keep these green; a failure prints
 the seed, the script disassembly and the transaction. `ORACLE_CASES` / `ORACLE_SEED` scale and re-seed
-the fuzzing (e.g. `ORACLE_CASES=1500 ORACLE_SEED=7 pnpm exec vitest run tests/oracle-interpreter.test.ts`);
-stay at or below ~1500 cases per run, since Z3's wasm heap is never reclaimed within a process (3000 hits
+the fuzzing (e.g. `ORACLE_CASES=1000 ORACLE_SEED=7 pnpm exec vitest run tests/oracle-interpreter.test.ts`);
+stay at or below ~1000 cases per run, since Z3's wasm heap is never reclaimed within a process (1500 hits
 the 2 GB limit) — sweep further with more seeds, not more cases. (The wasm worker's teardown abort that used to make
 `historical-leak.test.ts` flaky is gone with the native runtime.) Class
 identities (`ATTACKER`, `BURN`, covenant ids, commitment ints) are only *necessary* conditions for byte

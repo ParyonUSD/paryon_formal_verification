@@ -38,19 +38,34 @@ export interface LeakPolicy {
   internalAuthorityCategories: number[];
   ownership: OwnershipRule[];
   /**
-   * Immutable NFTs that must be recreated in place (same category, capability, script and commitment)
-   * whenever one is spent: the function NFTs that make each covenant operation *possible*. Losing one
-   * is not a capability leak but bricks that function, so it is checked as a separate (liveness)
-   * witness, see {@link preservationWitness}. Optional; templates without it check leaks only.
+   * The function NFTs: immutable NFTs of an internal category with a commitment of a fixed short
+   * length, which the loan / pool covenants accept as their delegated function by *shape alone*
+   * (category + commitment length, never the script). Two obligations follow:
+   *  - authenticity (part of the invariant): every NFT of that shape sits on one of the function
+   *    scripts — a forged one on any other script would let its holder spend any loan/pool with no
+   *    covenant logic. Assumed on inputs, checked on outputs by {@link forgedFunctionNftWitness}.
+   *  - preservation (liveness): a function NFT that is spent is recreated in place, see
+   *    {@link preservationWitness}. Losing one bricks that operation.
+   * Optional; templates without it check the capability leak only.
    */
-  preserve?: PreservationRule[];
+  functionNfts?: FunctionNftRule[];
 }
 
-/** An immutable-NFT class that must survive every transaction spending it. */
-export interface PreservationRule {
+/** A class of function NFTs: this category, immutable, this commitment length, only on these scripts. */
+export interface FunctionNftRule {
   category: number;
   scripts: number[];
+  commitmentLength: number;
 }
+
+/** True when a UTXO has the shape of a function NFT under `rule` (whatever script it sits on). */
+function hasFunctionNftShape(z3: Z3, utxo: Utxo, rule: FunctionNftRule): Bool {
+  return z3.And(
+    utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
+    utxo.commitmentLength.eq(rule.commitmentLength),
+  );
+}
+const onScripts = (z3: Z3, utxo: Utxo, scripts: number[]): Bool => any(z3, scripts.map((sc) => utxo.script.eq(sc)));
 
 /** True when a UTXO carries an internal-authority category with mutable/minting capability. */
 export function isInternalPrivileged(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
@@ -86,7 +101,26 @@ function ownedByCovenant(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
 export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
   return z3.And(
     ...tx.inputs.map((utxo) => z3.Implies(isInternalPrivileged(z3, utxo, policy), ownedByCovenant(z3, utxo, policy))),
+    // Function-NFT authenticity: anything of that shape sits on a function script.
+    ...tx.inputs.flatMap((utxo) => (policy.functionNfts ?? []).map((rule) =>
+      z3.Implies(hasFunctionNftShape(z3, utxo, rule), onScripts(z3, utxo, rule.scripts)))),
   );
+}
+
+/**
+ * The forged-function-NFT witness: satisfiable exactly when some output has the shape of a function
+ * NFT but sits on neither a function script nor a burn. Such an output is the second half of the
+ * invariant the induction needs (the first being {@link leakWitness}): the loan and pool covenants
+ * authenticate their delegate by shape alone, so a forged one anywhere else is full authority over
+ * every loan / the pool. Query it with {@link preservedInputsOnlyAt}, like the preservation witness:
+ * an ungoverned input of that shape is impossible on chain (it can only be spent by its covenant).
+ */
+export function forgedFunctionNftWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  return any(z3, tx.outputs.flatMap((out) => (policy.functionNfts ?? []).map((rule) => z3.And(
+    hasFunctionNftShape(z3, out, rule),
+    z3.Not(out.script.eq(Script.BURN)),
+    z3.Not(onScripts(z3, out, rule.scripts)),
+  ))));
 }
 
 /**
@@ -121,12 +155,12 @@ export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolic
  * `governed` is every input index whose covenant this template interprets or designates.
  */
 export function preservedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy, governed: number[]): Bool {
-  const rules = policy.preserve ?? [];
+  const rules = policy.functionNfts ?? [];
   return z3.And(
     ...tx.inputs.map((utxo, i) =>
       governed.includes(i) ? z3.Bool.val(true) : z3.Not(any(z3, rules.map((rule) => z3.And(
         utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
-        any(z3, rule.scripts.map((sc) => utxo.script.eq(sc))),
+        z3.Or(onScripts(z3, utxo, rule.scripts), utxo.commitmentLength.eq(rule.commitmentLength)),
       ))))),
   );
 }
@@ -137,15 +171,16 @@ export function preservedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolicy
  * still immutable, same script, same commitment. Assert alongside consensus + covenants, expect UNSAT.
  */
 export function preservationWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
-  const rules = policy.preserve ?? [];
+  const rules = policy.functionNfts ?? [];
   return any(z3, tx.inputs.flatMap((input) => rules.map((rule) => {
     const matches = z3.And(
       input.present, input.category.eq(rule.category), input.capability.eq(Capability.IMMUTABLE),
-      any(z3, rule.scripts.map((sc) => input.script.eq(sc))),
+      onScripts(z3, input, rule.scripts),
     );
     const recreated = any(z3, tx.outputs.map((out) => z3.And(
       out.present, out.category.eq(rule.category), out.capability.eq(Capability.IMMUTABLE),
       out.script.eq(input.script), out.commitment.eq(input.commitment),
+      out.commitmentLength.eq(input.commitmentLength),
     )));
     return z3.And(matches, z3.Not(recreated));
   })));

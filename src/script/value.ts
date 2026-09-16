@@ -41,6 +41,8 @@ export type SVal =
    * script requires the value true, but its negation must never be asserted.
    */
   | { k: 'bool'; e: Bool | null; lossy?: boolean }
+  /** Opaque content of a known byte length (an OP_NUM2BIN result, a hash). */
+  | { k: 'sized'; len: number }
   | { k: 'opaque' };
 
 export const OPAQUE: SVal = { k: 'opaque' };

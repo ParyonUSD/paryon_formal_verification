@@ -88,9 +88,21 @@ describe('consensus tally vs libauth token validation (differential oracle)', ()
       const other = await check({ inputs: [nft(1, Capability.MINTING)], outputs: [nft(2, Capability.IMMUTABLE)] });
       expect(other.real).not.toBe(true); expect(other.admits).toBe(false);
     });
-    it('known imprecision: unmatched immutable commitments are rejected on chain but admitted by the model', async () => {
-      // Sound (the model is a superset) and irrelevant to capability movement; documented in docs/scope.md.
+    it('an immutable output with a commitment no immutable input carries (and no mutable input)', async () => {
       const r = await check({ inputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(1))], outputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(2))] });
+      expect(r.real).not.toBe(true); expect(r.admits).toBe(false);
+    });
+    it('one immutable input cannot be matched by two immutable outputs', async () => {
+      const r = await check({ inputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(1))], outputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(1)), nft(1, Capability.IMMUTABLE, Uint8Array.of(1))] });
+      expect(r.real).not.toBe(true); expect(r.admits).toBe(false);
+    });
+    it('a mutable input may become an immutable NFT with any commitment', async () => {
+      const r = await check({ inputs: [nft(1, Capability.MUTABLE, Uint8Array.of(1))], outputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(7, 7))] });
+      expect(r).toEqual({ real: true, admits: true });
+    });
+    it('known imprecision: the model identifies 0x00 with 0x80 (both read as int 0 of length 1)', async () => {
+      // Sound (the model matches at least what the chain matches); the only residue of the int abstraction.
+      const r = await check({ inputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(0x80))], outputs: [nft(1, Capability.IMMUTABLE, Uint8Array.of(0x00))] });
       expect(r.real).not.toBe(true); expect(r.admits).toBe(true);
     });
   });

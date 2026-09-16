@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { compose, type Covenant } from './covenant.js';
 import { addConsensusRules } from '../src/consensus.js';
 import { Capability, Script, declareTx } from '../src/model.js';
-import { leakWitness, preservationWitness } from '../src/policy.js';
+import { forgedFunctionNftWitness, inputsRespectInvariant, leakWitness, preservationWitness } from '../src/policy.js';
 import { getContext, newSolver, type Z3, type Z3Solver } from '../src/z3.js';
 
 const PARYON = 1;
@@ -68,9 +68,9 @@ describe('capability-leak policy', () => {
 
   it('preservation: a spent function NFT that is not recreated in place is caught (sat), recreated is fine (unsat)', async () => {
     const FN_SCRIPT = LOAN_SCRIPT + 1;
-    const withRules = { ...policy, preserve: [{ category: PARYON, scripts: [FN_SCRIPT] }] };
+    const withRules = { ...policy, functionNfts: [{ category: PARYON, scripts: [FN_SCRIPT], commitmentLength: 1 }] };
     const fnInput = (s: Z3Solver, tx: ReturnType<typeof declareTx>) =>
-      s.add(tx.inputs[1]!.present, tx.inputs[1]!.category.eq(PARYON), tx.inputs[1]!.capability.eq(Capability.IMMUTABLE), tx.inputs[1]!.script.eq(FN_SCRIPT), tx.inputs[1]!.commitment.eq(2));
+      s.add(tx.inputs[1]!.present, tx.inputs[1]!.category.eq(PARYON), tx.inputs[1]!.capability.eq(Capability.IMMUTABLE), tx.inputs[1]!.script.eq(FN_SCRIPT), tx.inputs[1]!.commitment.eq(2), tx.inputs[1]!.commitmentLength.eq(1));
     // Not recreated: only the loan output is pinned.
     let { s, tx } = setup(z3, 3, true);
     fnInput(s, tx);
@@ -81,8 +81,28 @@ describe('capability-leak policy', () => {
     ({ s, tx } = setup(z3, 3, true));
     fnInput(s, tx);
     compose(z3, s, tx, [safeLoan]);
-    s.add(tx.outputs[1]!.present, tx.outputs[1]!.category.eq(PARYON), tx.outputs[1]!.capability.eq(Capability.IMMUTABLE), tx.outputs[1]!.script.eq(FN_SCRIPT), tx.outputs[1]!.commitment.eq(2));
+    s.add(tx.outputs[1]!.present, tx.outputs[1]!.category.eq(PARYON), tx.outputs[1]!.capability.eq(Capability.IMMUTABLE), tx.outputs[1]!.script.eq(FN_SCRIPT), tx.outputs[1]!.commitment.eq(2), tx.outputs[1]!.commitmentLength.eq(1));
     s.add(preservationWitness(z3, tx, withRules));
+    expect(await s.check()).toBe('unsat');
+  });
+
+  it('forged function NFT: a 1-byte-commitment immutable of the category off the function script is caught (sat); consensus alone forbids it from immutables (unsat)', async () => {
+    const FN_SCRIPT = LOAN_SCRIPT + 1;
+    const withRules = { ...policy, functionNfts: [{ category: PARYON, scripts: [FN_SCRIPT], commitmentLength: 1 }] };
+    // The loan's mutable NFT is spent; a covenant that only recreates the loan leaves the mutable slot
+    // free to become an immutable 1-byte-commitment NFT on the attacker script: the forged shape.
+    let { s, tx } = setup(z3, 3);
+    s.add(inputsRespectInvariant(z3, tx, withRules));
+    s.add(forgedFunctionNftWitness(z3, tx, withRules));
+    expect(await s.check()).toBe('sat');
+    // With the loan recreated (the mutable consumed), an immutable of the category needs a matching
+    // immutable input under consensus rule 4, and the only one is on the function script and genuine.
+    ({ s, tx } = setup(z3, 3, true));
+    s.add(tx.inputs[1]!.present, tx.inputs[1]!.category.eq(PARYON), tx.inputs[1]!.capability.eq(Capability.IMMUTABLE), tx.inputs[1]!.script.eq(FN_SCRIPT), tx.inputs[1]!.commitment.eq(2), tx.inputs[1]!.commitmentLength.eq(1));
+    compose(z3, s, tx, [safeLoan]);
+    s.add(tx.outputs[1]!.present, tx.outputs[1]!.category.eq(PARYON), tx.outputs[1]!.capability.eq(Capability.IMMUTABLE), tx.outputs[1]!.script.eq(FN_SCRIPT), tx.outputs[1]!.commitment.eq(2), tx.outputs[1]!.commitmentLength.eq(1));
+    s.add(inputsRespectInvariant(z3, tx, withRules));
+    s.add(forgedFunctionNftWitness(z3, tx, withRules));
     expect(await s.check()).toBe('unsat');
   });
 

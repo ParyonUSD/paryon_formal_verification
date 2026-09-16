@@ -1,5 +1,5 @@
 import { Capability, type Utxo } from '../model.js';
-import { type LeakPolicy, type OwnershipRule, type PreservationRule } from '../policy.js';
+import { type FunctionNftRule, type LeakPolicy, type OwnershipRule } from '../policy.js';
 import type { Num, Z3Solver } from '../z3.js';
 import { CAT, SCRIPT } from './ids.js';
 
@@ -58,16 +58,18 @@ export const OWN = {
 } satisfies Record<string, OwnershipRule>;
 
 /**
- * The function NFTs: immutable NFTs whose presence on their function script is what makes each
- * covenant operation possible. Every transaction spending one must recreate it in place (checked by
- * `preservationWitness`); losing one would brick that operation for the whole system.
+ * The function NFTs: immutable NFTs with a single-byte commitment that `Loan.interact` (paryon) and
+ * `StabilityPool.interact` (pool) accept as their delegated function *by shape alone* — category plus
+ * `commitment.length == 1`, never the script. So (authenticity) no NFT of that shape may ever exist off
+ * these function scripts, or its holder could spend any loan / the pool with no covenant logic; and
+ * (preservation) a spent one must be recreated in place, or that operation is bricked.
  */
-export const FUNCTION_NFTS: PreservationRule[] = [
-  { category: CAT.PARYON, scripts: [
+export const FUNCTION_NFTS: FunctionNftRule[] = [
+  { category: CAT.PARYON, commitmentLength: 1, scripts: [
     SCRIPT.FN_LIQUIDATE, SCRIPT.FN_MANAGE, SCRIPT.FN_REDEEM, SCRIPT.FN_START_REDEMPTION,
     SCRIPT.FN_SWAP_IN, SCRIPT.FN_SWAP_OUT, SCRIPT.FN_PAY_INTEREST, SCRIPT.FN_CHANGE_INTEREST,
   ] },
-  { category: CAT.POOL, scripts: [
+  { category: CAT.POOL, commitmentLength: 1, scripts: [
     SCRIPT.FN_LIQUIDATELOAN, SCRIPT.FN_ADD_LIQUIDITY, SCRIPT.FN_WITHDRAW, SCRIPT.FN_NEW_PERIOD,
   ] },
 ];
@@ -79,7 +81,7 @@ export const FUNCTION_NFTS: PreservationRule[] = [
  * is exactly how we say "no paryon-minting input exists in a loan transaction".
  */
 export function loanPolicy(ownership: OwnershipRule[]): LeakPolicy {
-  return { internalAuthorityCategories: INTERNAL_CATEGORIES, ownership, preserve: FUNCTION_NFTS };
+  return { internalAuthorityCategories: INTERNAL_CATEGORIES, ownership, functionNfts: FUNCTION_NFTS };
 }
 
 /**
@@ -118,6 +120,8 @@ export interface UtxoSpec {
   value?: number | Num;
   /** NFT commitment as an integer (used to pin function-NFT identifiers). */
   commitment?: number;
+  /** NFT commitment byte length. */
+  commitmentLength?: number;
 }
 
 /** Mark a slot present and constrain the provided fields. */
@@ -129,6 +133,7 @@ export function pin(solver: Z3Solver, utxo: Utxo, spec: UtxoSpec): void {
   if (spec.fts !== undefined) solver.add(utxo.fts.eq(spec.fts));
   if (spec.value !== undefined) solver.add(utxo.value.eq(spec.value));
   if (spec.commitment !== undefined) solver.add(utxo.commitment.eq(spec.commitment));
+  if (spec.commitmentLength !== undefined) solver.add(utxo.commitmentLength.eq(spec.commitmentLength));
 }
 
 /** A loan input: paryon mutable NFT (no fungible) on the loan script. */
@@ -138,7 +143,9 @@ export function loanInput(solver: Z3Solver, utxo: Utxo): void {
 
 /** A loan function NFT input: paryon immutable on the function'solver script, carrying its commitment id. */
 export function functionNftInput(solver: Z3Solver, utxo: Utxo, scriptId: number, commitment?: number): void {
-  pin(solver, utxo, { category: CAT.PARYON, capability: Capability.IMMUTABLE, script: scriptId, fts: 0, commitment });
+  pin(solver, utxo, {
+    category: CAT.PARYON, capability: Capability.IMMUTABLE, script: scriptId, fts: 0, commitment, commitmentLength: 1,
+  });
 }
 
 /** A loan token sidecar input: a (user-facing) loanKey immutable NFT on the sidecar script. */

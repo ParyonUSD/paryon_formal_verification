@@ -1,7 +1,9 @@
 import { expect } from 'vitest';
 import type { SymbolicTx } from '../src/model.js';
 import type { BuiltArtifact } from '../src/script/fromArtifact.js';
-import { leakWitness, preservationWitness, preservedInputsOnlyAt, type LeakPolicy } from '../src/policy.js';
+import {
+  forgedFunctionNftWitness, leakWitness, preservationWitness, preservedInputsOnlyAt, type LeakPolicy,
+} from '../src/policy.js';
 import { checkNative, Z3_INSTALL_HINT, type Bool, type Z3, type Z3Solver } from '../src/z3.js';
 
 /**
@@ -46,8 +48,8 @@ export async function expectLeak(z3: Z3, s: Z3Solver, tx: SymbolicTx, policy: Le
 
 /**
  * Assert an artifact-derived build is safe: at least one path is realisable
- * (non-vacuous), EVERY path is leak-free, and (when the policy lists preservation
- * rules) every path recreates the function NFTs it spends.
+ * (non-vacuous), EVERY path is leak-free, and (when the policy lists function NFTs) every path
+ * recreates the function NFTs it spends and creates no function-NFT-shaped output off their scripts.
  */
 export async function expectArtifactSafe(z3: Z3, built: BuiltArtifact): Promise<void> {
   expect(built.paths.length).toBeGreaterThan(0);
@@ -62,11 +64,13 @@ export async function expectArtifactSafe(z3: Z3, built: BuiltArtifact): Promise<
   const leak = leakWitness(z3, built.tx, built.policy);
   const restrict = preservedInputsOnlyAt(z3, built.tx, built.policy, built.governedInputs);
   const preserved = preservationWitness(z3, built.tx, built.policy);
+  const forged = forgedFunctionNftWitness(z3, built.tx, built.policy);
   for (let p = 0; p < built.paths.length; p++) {
     const q = (extra: Bool[], label: string) => decideNative(built.solverFor(p, extra), `path${p}-${label}`);
     expect(await q([leak], 'leak')).toBe('unsat'); // leak-free on every path
-    if (built.policy.preserve?.length) {
+    if (built.policy.functionNfts?.length) {
       expect(await q([restrict, preserved], 'preservation'), 'a function NFT is not recreated').toBe('unsat');
+      expect(await q([restrict, forged], 'forged'), 'a function-NFT-shaped output escapes the function scripts').toBe('unsat');
     }
   }
 }
