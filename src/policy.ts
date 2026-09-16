@@ -91,6 +91,14 @@ export interface FunctionNftRule {
   category: number;
   scripts: number[];
   commitmentLength: number;
+  /**
+   * script id -> the commitment identifier that script's function NFT carries, where the deployment
+   * binds them (it does: each function NFT was minted once, on its own function contract, with its own
+   * identifier byte — the fact `verify_contract_deployment` checks at genesis). Without it the model
+   * lets a function NFT sit on a *sibling* function's script, and a covenant that picks its output
+   * index from the adjacent commitment then pins the wrong output and leaves another one free.
+   */
+  commitments?: Record<number, number>;
 }
 
 /** True when a UTXO has the shape of a function NFT under `rule` (whatever script it sits on). */
@@ -101,6 +109,13 @@ function hasFunctionNftShape(z3: Z3, utxo: Utxo, rule: FunctionNftRule): Bool {
   );
 }
 const onScripts = (z3: Z3, utxo: Utxo, scripts: number[]): Bool => any(z3, scripts.map((sc) => utxo.script.eq(sc)));
+/** On one of the function scripts, carrying that script's own identifier where the two are bound. */
+function onFunctionSite(z3: Z3, utxo: Utxo, rule: FunctionNftRule): Bool {
+  return any(z3, rule.scripts.map((sc) => {
+    const id = rule.commitments?.[sc];
+    return id === undefined ? utxo.script.eq(sc) : z3.And(utxo.script.eq(sc), utxo.commitment.eq(id));
+  }));
+}
 
 /** True when a UTXO carries an internal-authority category with mutable/minting capability. */
 export function isInternalPrivileged(z3: Z3, utxo: Utxo, policy: LeakPolicy): Bool {
@@ -138,7 +153,7 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
     ...tx.inputs.map((utxo) => z3.Implies(isInternalPrivileged(z3, utxo, policy), ownedByCovenant(z3, utxo, policy))),
     // Function-NFT authenticity: anything of that shape sits on a function script.
     ...tx.inputs.flatMap((utxo) => (policy.functionNfts ?? []).map((rule) =>
-      z3.Implies(hasFunctionNftShape(z3, utxo, rule), onScripts(z3, utxo, rule.scripts)))),
+      z3.Implies(hasFunctionNftShape(z3, utxo, rule), onFunctionSite(z3, utxo, rule)))),
     // Sidecar adjacency: the UTXO one output later than a covenant's state holder is its companion.
     // The covenants authenticate that companion by outpoint alone, so this is the half of the
     // authentication the bytecode does not carry; `adjacencyWitness` discharges it on the outputs.
@@ -185,7 +200,7 @@ export function forgedFunctionNftWitness(z3: Z3, tx: SymbolicTx, policy: LeakPol
   return any(z3, tx.outputs.flatMap((out) => (policy.functionNfts ?? []).map((rule) => z3.And(
     hasFunctionNftShape(z3, out, rule),
     z3.Not(out.script.eq(Script.BURN)),
-    z3.Not(onScripts(z3, out, rule.scripts)),
+    z3.Not(onFunctionSite(z3, out, rule)),
   ))));
 }
 

@@ -64,14 +64,32 @@ export const OWN = {
  * these function scripts, or its holder could spend any loan / the pool with no covenant logic; and
  * (preservation) a spent one must be recreated in place, or that operation is bricked.
  */
+const LOAN_FUNCTION_SITES: Record<number, number> = {
+  [SCRIPT.FN_LIQUIDATE]: LoanFunction.LIQUIDATED,
+  [SCRIPT.FN_MANAGE]: LoanFunction.MANAGE_LOAN,
+  [SCRIPT.FN_REDEEM]: LoanFunction.REDEEMED,
+  [SCRIPT.FN_START_REDEMPTION]: LoanFunction.START_REDEMPTION,
+  [SCRIPT.FN_SWAP_IN]: LoanFunction.SWAP_IN_REDEMPTION,
+  [SCRIPT.FN_SWAP_OUT]: LoanFunction.SWAP_OUT_REDEMPTION,
+  [SCRIPT.FN_PAY_INTEREST]: LoanFunction.PAY_INTEREST,
+  [SCRIPT.FN_CHANGE_INTEREST]: LoanFunction.CHANGE_INTEREST,
+};
+const POOL_FUNCTION_SITES: Record<number, number> = {
+  [SCRIPT.FN_ADD_LIQUIDITY]: PoolFunction.ADD_LIQUIDITY,
+  [SCRIPT.FN_LIQUIDATELOAN]: PoolFunction.LIQUIDATE_LOAN,
+  [SCRIPT.FN_NEW_PERIOD]: PoolFunction.NEW_PERIOD,
+  [SCRIPT.FN_WITHDRAW]: PoolFunction.WITHDRAW_LIQUIDITY,
+};
+
 export const FUNCTION_NFTS: FunctionNftRule[] = [
-  { category: CAT.PARYON, commitmentLength: 1, scripts: [
-    SCRIPT.FN_LIQUIDATE, SCRIPT.FN_MANAGE, SCRIPT.FN_REDEEM, SCRIPT.FN_START_REDEMPTION,
-    SCRIPT.FN_SWAP_IN, SCRIPT.FN_SWAP_OUT, SCRIPT.FN_PAY_INTEREST, SCRIPT.FN_CHANGE_INTEREST,
-  ] },
-  { category: CAT.POOL, commitmentLength: 1, scripts: [
-    SCRIPT.FN_LIQUIDATELOAN, SCRIPT.FN_ADD_LIQUIDITY, SCRIPT.FN_WITHDRAW, SCRIPT.FN_NEW_PERIOD,
-  ] },
+  {
+    category: CAT.PARYON, commitmentLength: 1,
+    scripts: Object.keys(LOAN_FUNCTION_SITES).map(Number), commitments: LOAN_FUNCTION_SITES,
+  },
+  {
+    category: CAT.POOL, commitmentLength: 1,
+    scripts: Object.keys(POOL_FUNCTION_SITES).map(Number), commitments: POOL_FUNCTION_SITES,
+  },
 ];
 
 /**
