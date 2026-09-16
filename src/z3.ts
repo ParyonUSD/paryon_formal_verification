@@ -71,10 +71,40 @@ export function newSolver(z3: Z3): Z3Solver {
  */
 export async function checkNative(solver: Z3Solver, label: string): Promise<'sat' | 'unsat' | 'unknown'> {
   const file = writeQuery(solver, label, '(check-sat)\n');
-  const { stdout, stderr } = await execFileAsync(z3Binary(), ['-smt2', file], { timeout: NATIVE_TIMEOUT_MS, maxBuffer: 1 << 20 });
-  const verdict = stdout.trim().split('\n').pop();
-  if (verdict === 'sat' || verdict === 'unsat' || verdict === 'unknown') return verdict;
-  throw new Error(`z3 gave no verdict for ${file}: ${stdout} ${stderr}`);
+  const { stdout } = await runZ3(file);
+  return readVerdict(stdout, file);
+}
+
+/**
+ * The verdict of a native run: the FIRST token of z3's output, and nothing else will do.
+ *
+ * A decision procedure that answers "unsat" when it did not run is worse than useless: every proof in
+ * this repo is an expected `unsat`, so a timeout, an out-of-memory kill, a malformed `.smt2` or a
+ * missing binary would silently pass every check. Anything that is not exactly `sat`, `unsat` or
+ * `unknown` therefore throws, with the query file named so the failure can be reproduced by hand.
+ */
+function readVerdict(stdout: string, file: string): 'sat' | 'unsat' | 'unknown' {
+  const first = stdout.trimStart().split(/\s+/, 1)[0];
+  if (first === 'sat' || first === 'unsat' || first === 'unknown') return first;
+  throw new Error(`z3 gave no verdict for ${file}: ${stdout.slice(0, 500) || '<no output>'}`);
+}
+
+/**
+ * Run z3 on a query file. A non-zero exit is only tolerated when stdout still carries a *negative*
+ * verdict: `(get-model)` after an unsat `(check-sat)` is an error ("model is not available") that z3
+ * reports with exit code 1, and that run decided the query. A `sat` that also failed is never
+ * tolerated — its model may be truncated — and a killed process (the timeout) never is.
+ */
+async function runZ3(file: string): Promise<{ stdout: string }> {
+  try {
+    return await execFileAsync(z3Binary(), ['-smt2', file], { timeout: NATIVE_TIMEOUT_MS, maxBuffer: 1 << 26 });
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException & { stdout?: string; killed?: boolean };
+    if (err.killed === true || typeof err.stdout !== 'string') throw e;
+    const first = err.stdout.trimStart().split(/\s+/, 1)[0];
+    if (first === 'unsat' || first === 'unknown') return { stdout: err.stdout };
+    throw e;
+  }
 }
 /**
  * Decide a solver's assertions natively *and*, when satisfiable, bring back the assignment.
@@ -87,18 +117,9 @@ export async function modelNative(
   solver: Z3Solver, label: string,
 ): Promise<{ verdict: 'unsat' | 'unknown' } | { verdict: 'sat'; model: Map<string, string> }> {
   const file = writeQuery(solver, label, '(check-sat)\n(get-model)\n');
-  // z3 exits non-zero on the `(get-model)` that follows an unsat `(check-sat)` ("model is not
-  // available"), so the verdict is read from stdout either way.
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(z3Binary(), ['-smt2', file], { timeout: NATIVE_TIMEOUT_MS, maxBuffer: 1 << 26 }));
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException & { stdout?: string };
-    if (err.code === 'ENOENT' || typeof err.stdout !== 'string') throw e;
-    stdout = err.stdout;
-  }
-  const verdict = stdout.trimStart().split(/\s/, 1)[0];
-  if (verdict !== 'sat') return { verdict: verdict === 'unknown' ? 'unknown' : 'unsat' };
+  const { stdout } = await runZ3(file);
+  const verdict = readVerdict(stdout, file);
+  if (verdict !== 'sat') return { verdict };
   return { verdict: 'sat', model: parseModel(stdout) };
 }
 
