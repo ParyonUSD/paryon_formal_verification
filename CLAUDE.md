@@ -110,8 +110,14 @@ Assertion helpers live in `tests/assertions.ts`: `expectArtifactSafe` (≥1 path
 path leak-free — the standard check), `expectArtifactLeaks` (a "composition matters" control: drop a
 partner covenant and show the leak reappears), plus lower-level `expectSat`/`expectNoLeak`/`expectLeak`.
 Coverage is organized by subsystem: `artifact-loan`, `artifact-redemption`, `artifact-pool`,
-`artifact-loankey`, plus `consensus`/`policy`/`historical-leak` unit tests and the libauth oracle tests
-`oracle-interpreter`/`oracle-consensus`/`oracle-decode`.
+`artifact-loankey`, `artifact-price`, plus `consensus`/`policy`/`historical-leak` unit tests and the
+libauth oracle tests `oracle-interpreter`/`oracle-consensus`/`oracle-decode`. `tests/coverage.test.ts` is
+the function-level ledger: every artifact function must be verified by a template or excluded with a
+reason — classify new functions there. `expectArtifactSafe` checks the leak witness *and* the
+function-NFT preservation witness (policy `preserve`); `buildFromArtifact` refuses a template whose
+output capacity leaves no unpinned slot, so bump `nOutputs` when it complains. `designatedInputs` must
+list every input a `setup` pins with a privileged or function-NFT class that no interpreted covenant
+governs (e.g. a partner dropped in a "composition matters" control).
 
 ## Scope boundary (what this tool does NOT check)
 

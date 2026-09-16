@@ -62,6 +62,7 @@ Every contract's covenant output pins are derived from the compiled `@paryonusd/
 | Redemption | startRedemption, finalize (redeem), swap | `tests/artifact-redemption.test.ts` |
 | Stability pool | addLiquidity, withdraw, newPeriod, liquidate, payout | `tests/artifact-pool.test.ts` |
 | Borrowing + loanKey | borrow, updatePeriodState, loanKey-factory create | `tests/artifact-loankey.test.ts` |
+| Price contract | updatePrice (sharePrice as a partner everywhere) | `tests/artifact-price.test.ts` |
 
 Each transaction is checked for non-vacuity (a valid tx is `sat`) and leak-freedom (consensus + covenants + leak is `unsat`). Several carry a `composition matters` test that drops a delegated partner covenant and shows the leak reappear, proving the cross-contract protection is load-bearing.
 

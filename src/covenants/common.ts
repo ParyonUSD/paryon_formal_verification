@@ -47,6 +47,7 @@ const own = (category: number, capability: number, scripts: number[]): Ownership
 export const OWN = {
   paryonMutableLoanPrice: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN, SCRIPT.PRICE]),
   paryonMutableLoan: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN]), // templates with no price input
+  paryonMutablePrice: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.PRICE]), // the price contract alone
   poolMinting: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL]),
   poolMintingFull: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL, SCRIPT.PAYOUT]), // pool + each Payout
   poolMutableCollector: own(CAT.POOL, Capability.MUTABLE, [SCRIPT.COLLECTOR]),
@@ -102,6 +103,8 @@ export const POLICY = {
   withdraw: loanPolicy([OWN.poolMinting]),
   newPeriod: loanPolicy([OWN.poolMintingFull, OWN.poolMutableCollector]), // creates a Payout
   payout: loanPolicy([OWN.poolMintingFull]),
+  // price contract on its own
+  updatePrice: loanPolicy([OWN.paryonMutablePrice]),
   // borrowing + loanKey factory
   borrow: loanPolicy([OWN.paryonMintingBorrowing, OWN.paryonMutableLoanPrice]),
   loanKeyFactory: loanPolicy([OWN.loanKeyFactoryMinting]),
