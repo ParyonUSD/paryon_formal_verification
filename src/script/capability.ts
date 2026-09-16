@@ -65,6 +65,11 @@ export interface CapabilityModel {
   compare(op: number, top: SVal, second: SVal): SVal;
   /** The byte length of a stack value as a model Int (`OP_SIZE`), or null when unknown. */
   lengthOf(v: SVal): Num | null;
+  /**
+   * The numeric value of a stack item as a model Int, or null when it is not a resolvable number.
+   * Used by the interpreter's linear arithmetic (`OP_ADD`/`OP_1ADD`/... against a constant).
+   */
+  numValue(v: SVal): Num | null;
 }
 
 export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number): CapabilityModel {
@@ -237,6 +242,13 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   }
 
   function equalConstraint(a: SVal, b: SVal): EqualityResult {
+    // Outpoint txid identity: `tx.inputs[i].outpointTransactionHash == tx.inputs[j].outpointTransactionHash`,
+    // the adjacency check `Loan.interact` / `LoanTokenSidecar.attach` authenticate their partner with.
+    // Exact, not lossy: `outpointTx` is a per-input identity variable, so two inputs' hashes are equal
+    // exactly when the variables are (unlike script ids, which stand for a *class* of scripts).
+    if (a.k === 'outpoint' && b.k === 'outpoint') {
+      return exact(tx.inputs[a.i]!.outpointTx.eq(tx.inputs[b.i]!.outpointTx));
+    }
     const ca = catView(a), cb = catView(b);
     if (ca && cb) return exact(eqCategory(ca, cb));
     const sc = eqScript(a, b);
@@ -304,7 +316,7 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
   }
 
-  return { equalConstraint, numEqResult, compare, lengthOf: lengthNum };
+  return { equalConstraint, numEqResult, compare, lengthOf: lengthNum, numValue: numVal };
 }
 
 function countPresent(z3: Z3, tx: SymbolicTx, of: 'in' | 'out'): Num {

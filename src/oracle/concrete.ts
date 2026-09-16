@@ -58,6 +58,12 @@ export interface ConcreteUtxo {
   commitment: Uint8Array;
   fts: bigint;
   value: bigint;
+  /**
+   * The outpoint this input spends, as (transaction identity, output index). Inputs only; the
+   * identity is mapped to real 32 bytes by {@link Universe.outpointHash}. Defaults to
+   * `{ tx: <input index>, index: 1 }`: all-distinct transactions and a non-genesis index.
+   */
+  outpoint?: { tx: number; index: number };
 }
 export interface ConcreteTx {
   inputs: ConcreteUtxo[];
@@ -98,9 +104,10 @@ export class Universe {
   /** Bind a script id to explicit locking bytecode (e.g. the bare script under test). */
   setScript(id: number, bytes: Uint8Array): void { this.scripts.set(id, bytes); }
 
-  outpointHash(inputIndex: number): Uint8Array {
-    let bytes = this.outpoints.get(inputIndex);
-    if (!bytes) { bytes = this.rng.bytes(32); this.outpoints.set(inputIndex, bytes); }
+  /** Distinct 32-byte transaction hashes per outpoint-transaction identity (the model's `outpointTx`). */
+  outpointHash(txId: number): Uint8Array {
+    let bytes = this.outpoints.get(txId);
+    if (!bytes) { bytes = this.rng.bytes(32); this.outpoints.set(txId, bytes); }
     return bytes;
   }
 }
@@ -136,7 +143,7 @@ function toLibauthOutput(universe: Universe, utxo: ConcreteUtxo): Output {
   return out;
 }
 
-/** The libauth `{ transaction, sourceOutputs }` pair for a concrete transaction. Outpoint index 1 (no genesis). */
+/** The libauth `{ transaction, sourceOutputs }` pair for a concrete transaction (see ConcreteUtxo.outpoint). */
 export function toLibauth(
   universe: Universe, ctx: ConcreteTx, unlocking: { inputIndex: number; args: Uint8Array[] } | null = null,
 ): { transaction: Transaction; sourceOutputs: Output[] } {
@@ -145,9 +152,9 @@ export function toLibauth(
     transaction: {
       version: 2,
       locktime: 0,
-      inputs: ctx.inputs.map((_, i) => ({
-        outpointIndex: 1,
-        outpointTransactionHash: universe.outpointHash(i),
+      inputs: ctx.inputs.map((utxo, i) => ({
+        outpointIndex: utxo.outpoint?.index ?? 1,
+        outpointTransactionHash: universe.outpointHash(utxo.outpoint?.tx ?? i),
         sequenceNumber: 0xffffffff,
         // Function arguments are what the unlocking script pushes (push-only, bottom of the stack).
         unlockingBytecode: unlocking && unlocking.inputIndex === i
@@ -226,6 +233,15 @@ export function fixTx(z3: Z3, solver: Z3Solver, tx: SymbolicTx, ctx: ConcreteTx)
   };
   fix(tx.inputs, ctx.inputs);
   fix(tx.outputs, ctx.outputs);
+  // Outpoints are an input-only field; absent slots get the same neutral values `addOutpointRules`
+  // leaves them free to take, so fixTx stays usable with or without the consensus rules loaded.
+  tx.inputs.forEach((slot, i) => {
+    const utxo = ctx.inputs[i];
+    solver.add(
+      slot.outpointTx.eq(utxo?.outpoint?.tx ?? (utxo ? i : 0)),
+      slot.outpointIndex.eq(utxo?.outpoint?.index ?? (utxo ? 1 : 0)),
+    );
+  });
 }
 
 /** The model's commitment abstraction (a CScriptNum reading of the bytes; see model.ts). */
@@ -276,10 +292,35 @@ export function randomUtxo(rng: Rng, opts: ConcreteTxOptions): ConcreteUtxo {
   return { category, capability, script, commitment, fts, value };
 }
 
+/**
+ * Distinct outpoints for `n` inputs, drawn so that several inputs often share a transaction (which is
+ * what the loan/pool adjacency checks compare) at nearby indices (which is what `outpointIndex + 1`
+ * compares). No transaction spends one outpoint twice, so the pairs are kept pairwise distinct — the
+ * model asserts that too. Transaction identities stay within `nInMax`, the model's `outpointTx` bound.
+ */
+export function genOutpoints(rng: Rng, n: number, nTxIds: number): { tx: number; index: number }[] {
+  const used = new Set<string>();
+  const out: { tx: number; index: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    let pick = { tx: rng.int(nTxIds), index: rng.int(4) };
+    // Retry a few times, then fall back to a slot that is certainly free.
+    for (let attempt = 0; used.has(`${pick.tx}:${pick.index}`) && attempt < 8; attempt++) {
+      pick = { tx: rng.int(nTxIds), index: rng.int(4) };
+    }
+    while (used.has(`${pick.tx}:${pick.index}`)) pick = { tx: pick.tx, index: pick.index + 1 };
+    used.add(`${pick.tx}:${pick.index}`);
+    out.push(pick);
+  }
+  return out;
+}
+
 export function genConcreteTx(rng: Rng, opts: ConcreteTxOptions): ConcreteTx {
   const nIn = 1 + rng.int(opts.nInMax);
   const nOut = 1 + rng.int(opts.nOutMax);
   const inputs = Array.from({ length: nIn }, () => randomUtxo(rng, opts));
+  // A small pool of transaction identities so inputs genuinely share one (the adjacency shape).
+  const outpoints = genOutpoints(rng, nIn, Math.max(2, Math.ceil(opts.nInMax / 2)));
+  outpoints.forEach((outpoint, i) => { inputs[i]!.outpoint = outpoint; });
   // Outputs are biased towards recreating inputs (the shape covenants actually produce), with mutations.
   const outputs = Array.from({ length: nOut }, (_, i) => {
     const source = inputs[i];

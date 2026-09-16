@@ -69,6 +69,18 @@ export interface Utxo {
    * `commitment.length == 1` — the function-NFT shape the covenants authenticate by — talks about.
    */
   commitmentLength: Num;
+  /**
+   * Identity of the transaction this UTXO was created by (its outpoint's txid), as a small int.
+   * **Inputs only** — an output has no outpoint yet, so the field is declared but never constrained
+   * or read for output slots.
+   *
+   * Like category/script ids this is an equality-only identity: the covenants compare two inputs'
+   * `outpointTransactionHash` and nothing else, and any equality pattern over n inputs is realisable
+   * with n distinct values, so the bounded domain (see `addOutpointRules`) loses nothing.
+   */
+  outpointTx: Num;
+  /** The outpoint's output index (>= 0). Inputs only, like {@link Utxo.outpointTx}. */
+  outpointIndex: Num;
   /** Whether this slot is actually used by the transaction. */
   present: Bool;
 }
@@ -96,6 +108,8 @@ function declareUtxo(z3: Z3, prefix: string, kind: 'in' | 'out', i: number): Utx
     script: z3.Int.const(name('script')),
     commitment: z3.Int.const(name('commitment')),
     commitmentLength: z3.Int.const(name('commitmentLength')),
+    outpointTx: z3.Int.const(name('outpointTx')),
+    outpointIndex: z3.Int.const(name('outpointIndex')),
     present: z3.Bool.const(name('present')),
   };
 }

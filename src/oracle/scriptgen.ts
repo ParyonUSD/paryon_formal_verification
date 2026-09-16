@@ -45,7 +45,7 @@ export interface Generated {
   lockingScript: ScriptOps;
 }
 
-type Kind = 'cat' | 'bc' | 'commit' | 'num';
+type Kind = 'cat' | 'bc' | 'commit' | 'num' | 'outpoint';
 
 // Stack effect of the plain stack opcodes we emit.
 const DELTA: Partial<Record<number, number>> = {
@@ -150,6 +150,17 @@ export function generateScript(cfg: GenConfig): Generated {
     emit(side === 'in' ? Op.OP_UTXOBYTECODE : Op.OP_OUTPUTBYTECODE, 0);
   };
 
+  /**
+   * An input's outpoint transaction hash. The model holds it as a per-input identity int, so equality
+   * between two of them is exact in both directions (this is the adjacency check `Loan.interact` and
+   * `LoanTokenSidecar.attach` authenticate their partner with).
+   */
+  const outpointOperand = (): void => {
+    const i = inIdx();
+    if (i === cfg.activeIndex && rng.bool(0.3)) emit(Op.OP_INPUTINDEX, 1); else pushNum(i);
+    emit(Op.OP_OUTPOINTTXHASH, 0);
+  };
+
   const commitOperand = (forceField = false): void => {
     if (!forceField && rng.bool(0.4)) {
       if (wide(0.3)) { // opaque content of a known length
@@ -177,7 +188,7 @@ export function generateScript(cfg: GenConfig): Generated {
     if (wide(0.3)) { opaqueNum(); return false; }
     // Counts, satoshi values, fungible amounts, and the byte lengths of commitments and categories are
     // all model Ints (exact in comparisons).
-    switch (rng.int(7)) {
+    switch (rng.int(9)) {
       case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); break;
       case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); break;
       case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); break;
@@ -196,6 +207,17 @@ export function generateScript(cfg: GenConfig): Generated {
         emit(Op.OP_SIZE, 1); emit(Op.OP_NIP);
         break;
       }
+      case 6: {
+        // An input's outpoint index, optionally shifted by one: the model resolves both exactly, so
+        // `inputs[k].outpointIndex == inputs[i].outpointIndex + 1` decides in both directions.
+        const i = inIdx();
+        if (i === cfg.activeIndex && rng.bool(0.3)) emit(Op.OP_INPUTINDEX, 1); else pushNum(i);
+        emit(Op.OP_OUTPOINTINDEX, 0);
+        if (rng.bool(0.4)) emit(rng.bool() ? Op.OP_1ADD : Op.OP_1SUB, 0);
+        else if (rng.bool(0.3)) { pushNum(1 + rng.int(3)); emit(rng.bool() ? Op.OP_ADD : Op.OP_SUB, -1); }
+        break;
+      }
+      case 7: outpointOperand(); emit(Op.OP_SIZE, 1); emit(Op.OP_NIP); break; // always 32
       default: emit(rng.bool() ? Op.OP_TXOUTPUTCOUNT : Op.OP_TXINPUTCOUNT, 1); break;
     }
     return true;
@@ -285,9 +307,11 @@ export function generateScript(cfg: GenConfig): Generated {
     } else {
       // Two constant commitments compare to nothing in the model (only fields carry a commitment), so exact
       // mode keeps a field on one side; categories and bytecode constants are modelled, so they need no such care.
-      const operand = kind === 'cat' ? catOperand : kind === 'bc' ? bcOperand : () => commitOperand(exact);
+      const operand = kind === 'cat' ? catOperand : kind === 'bc' ? bcOperand
+        : kind === 'outpoint' ? outpointOperand : () => commitOperand(exact);
       const other = wide(0.15)
-        ? rng.pick([catOperand, bcOperand, () => commitOperand(), junk]) // mismatched kinds: opaque to the model
+        // mismatched kinds: opaque to the model
+        ? rng.pick([catOperand, bcOperand, outpointOperand, () => commitOperand(), junk])
         : (kind === 'commit' ? () => commitOperand() : operand);
       const [a, b] = rng.bool() ? [operand, other] : [other, operand];
       pattern.arrange(a, b);
@@ -330,7 +354,10 @@ export function generateScript(cfg: GenConfig): Generated {
       junk(); emit(Op.OP_EQUAL, -1);
       return false;
     }
-    const kinds: Kind[] = exact && !positive ? ['cat', 'cat', 'num'] : ['cat', 'cat', 'bc', 'bc', 'commit', 'num'];
+    // Outpoint and category identities are exact under negation too; script ids and commitments are not.
+    const kinds: Kind[] = exact && !positive
+      ? ['cat', 'cat', 'num', 'outpoint']
+      : ['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint'];
     return compare(rng.pick(kinds), false);
   };
 
@@ -357,7 +384,7 @@ export function generateScript(cfg: GenConfig): Generated {
       emit(Op.OP_VERIFY, -1);
       return;
     }
-    if (r < 0.7) { compare(rng.pick<Kind>(['cat', 'cat', 'bc', 'bc', 'commit', 'num']), true); return; }
+    if (r < 0.7) { compare(rng.pick<Kind>(['cat', 'cat', 'bc', 'bc', 'commit', 'num', 'outpoint']), true); return; }
     boolExpr(2); emit(Op.OP_VERIFY, -1);
   };
   const block = (depth: number): void => { const n = 1 + rng.int(2); for (let k = 0; k < n; k++) statement(depth); };

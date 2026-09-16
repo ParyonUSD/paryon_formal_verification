@@ -43,6 +43,13 @@ export interface InterpretOptions {
 export interface InterpretStats {
   /** Highest output index any introspection opcode read on any path, or -1. */
   maxOutputIndex: number;
+  /**
+   * How many times a path read an input/output index at or beyond the model's capacity and was
+   * therefore dropped. Within the bounded model (transactions with at most `nInputs` inputs and
+   * `nOutputs` outputs) no such field exists, so dropping the path is faithful *for that bound*;
+   * a non-zero count means the bound, not the contracts, decided something, so builders report it.
+   */
+  outOfCapacity?: number;
 }
 
 export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: InterpretOptions): Path[] {
@@ -73,6 +80,20 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
   };
   const boolVal = (t: Truth): SVal => ({ k: 'bool', e: t.e, ...(t.lossy ? { lossy: true } : {}) });
 
+  /**
+   * `a + sign*b` as a stack value. Both concrete -> a concrete byte string (index arithmetic must stay
+   * concrete: `toIndex` reads it). Exactly one concrete, the other a number the model resolves ->
+   * the linear Z3 expression, which the VM computes the same way. Otherwise opaque.
+   */
+  const addSub = (a: SVal, b: SVal, sign: 1 | -1): SVal => {
+    if (a.k === 'bytes' && b.k === 'bytes') return constBytes(numToBytes(bytesToNum(a.v) + sign * bytesToNum(b.v)));
+    const constSide = a.k === 'bytes' ? 'a' : b.k === 'bytes' ? 'b' : null;
+    if (constSide === null) return num(null); // two symbolic operands: out of scope, stays opaque
+    const ea = cap.numValue(a), eb = cap.numValue(b);
+    if (ea === null || eb === null) return num(null);
+    return num(sign === 1 ? ea.add(eb) : ea.sub(eb));
+  };
+
   // ---- per-path execution ----
   const paths: Path[] = [];
 
@@ -81,6 +102,25 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
     const push = (v: SVal) => stack.push(v);
     const pop = (): SVal => { const v = stack.pop(); if (!v) throw new Error('stack underflow'); return v; };
     let feasible = true;
+    // Introspection index resolution, bounded by the model's capacity. A negative index names a
+    // UTXO that never exists (`this.activeInputIndex - 1` at input 0), and an index at or beyond the
+    // capacity names one this bounded model does not carry: either way the path cannot occur here,
+    // so it is pruned. Prunings of the second kind are counted so a builder can report that its
+    // capacity — not the contract — cut a path.
+    const inSlot = (v: SVal): number => {
+      const i = toIndex(v);
+      if (i >= 0 && i < tx.inputs.length) return i;
+      if (i >= tx.inputs.length && opts.stats) opts.stats.outOfCapacity = (opts.stats.outOfCapacity ?? 0) + 1;
+      feasible = false;
+      return 0; // a safe placeholder: the path is discarded, its constraints never reach a solver
+    };
+    const outSlot = (v: SVal): number => {
+      const i = outIndex(v);
+      if (i >= 0 && i < tx.outputs.length) return i;
+      if (i >= tx.outputs.length && opts.stats) opts.stats.outOfCapacity = (opts.stats.outOfCapacity ?? 0) + 1;
+      feasible = false;
+      return 0;
+    };
     // A concrete-false require (e.g. a seeded function selector that doesn't match
     // this branch) means the path can't occur on-chain; prune it.
     const verify = (v: SVal) => {
@@ -101,22 +141,26 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         case Op.OP_0: push(constBytes(new Uint8Array())); break;
 
         // introspection (index on stack)
-        case Op.OP_UTXOTOKENCATEGORY: push({ k: 'field', f: 'utxoCat', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENCATEGORY: push({ k: 'field', f: 'outCat', i: outIndex(pop()) }); break;
-        case Op.OP_UTXOTOKENCOMMITMENT: push({ k: 'field', f: 'utxoCommit', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENCOMMITMENT: push({ k: 'field', f: 'outCommit', i: outIndex(pop()) }); break;
-        case Op.OP_UTXOBYTECODE: push({ k: 'field', f: 'utxoBytecode', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTBYTECODE: push({ k: 'field', f: 'outBytecode', i: outIndex(pop()) }); break;
-        case Op.OP_UTXOVALUE: push({ k: 'field', f: 'utxoValue', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTVALUE: push({ k: 'field', f: 'outValue', i: outIndex(pop()) }); break;
-        case Op.OP_UTXOTOKENAMOUNT: push({ k: 'field', f: 'utxoAmount', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPUTTOKENAMOUNT: push({ k: 'field', f: 'outAmount', i: outIndex(pop()) }); break;
+        case Op.OP_UTXOTOKENCATEGORY: push({ k: 'field', f: 'utxoCat', i: inSlot(pop()) }); break;
+        case Op.OP_OUTPUTTOKENCATEGORY: push({ k: 'field', f: 'outCat', i: outSlot(pop()) }); break;
+        case Op.OP_UTXOTOKENCOMMITMENT: push({ k: 'field', f: 'utxoCommit', i: inSlot(pop()) }); break;
+        case Op.OP_OUTPUTTOKENCOMMITMENT: push({ k: 'field', f: 'outCommit', i: outSlot(pop()) }); break;
+        case Op.OP_UTXOBYTECODE: push({ k: 'field', f: 'utxoBytecode', i: inSlot(pop()) }); break;
+        case Op.OP_OUTPUTBYTECODE: push({ k: 'field', f: 'outBytecode', i: outSlot(pop()) }); break;
+        case Op.OP_UTXOVALUE: push({ k: 'field', f: 'utxoValue', i: inSlot(pop()) }); break;
+        case Op.OP_OUTPUTVALUE: push({ k: 'field', f: 'outValue', i: outSlot(pop()) }); break;
+        case Op.OP_UTXOTOKENAMOUNT: push({ k: 'field', f: 'utxoAmount', i: inSlot(pop()) }); break;
+        case Op.OP_OUTPUTTOKENAMOUNT: push({ k: 'field', f: 'outAmount', i: outSlot(pop()) }); break;
         case Op.OP_ACTIVEBYTECODE: push({ k: 'activeBytecode' }); break;
         case Op.OP_INPUTINDEX: push(constBytes(numToBytes(opts.activeIndex))); break;
         case Op.OP_TXINPUTCOUNT: push({ k: 'count', of: 'in' }); break;
         case Op.OP_TXOUTPUTCOUNT: push({ k: 'count', of: 'out' }); break;
-        case Op.OP_OUTPOINTTXHASH: push({ k: 'outpoint', i: toIndex(pop()) }); break;
-        case Op.OP_OUTPOINTINDEX: case Op.OP_INPUTSEQUENCENUMBER: pop(); push(OPAQUE); break;
+        case Op.OP_OUTPOINTTXHASH: push({ k: 'outpoint', i: inSlot(pop()) }); break;
+        // The outpoint index is a model Int, so the adjacency checks the loan/pool contracts
+        // authenticate their sidecar with (`inputs[i+1].outpointIndex == inputs[i].outpointIndex + 1`)
+        // decide exactly instead of going opaque.
+        case Op.OP_OUTPOINTINDEX: push(num(tx.inputs[inSlot(pop())]!.outpointIndex)); break;
+        case Op.OP_INPUTSEQUENCENUMBER: pop(); push(OPAQUE); break;
         case Op.OP_TXLOCKTIME: case Op.OP_TXVERSION: push(num(null)); break;
 
         // byte ops
@@ -191,15 +235,18 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         }
         case Op.OP_DEPTH: push(num(null)); break;
 
-        // add/sub stay concrete on concrete bytes (used to compute output/input indices)
-        case Op.OP_ADD: { const b = pop(), a = pop(); push(a.k === 'bytes' && b.k === 'bytes' ? constBytes(numToBytes(bytesToNum(a.v) + bytesToNum(b.v))) : num(null)); break; }
-        case Op.OP_SUB: { const b = pop(), a = pop(); push(a.k === 'bytes' && b.k === 'bytes' ? constBytes(numToBytes(bytesToNum(a.v) - bytesToNum(b.v))) : num(null)); break; }
+        // add/sub stay concrete on concrete bytes (used to compute output/input indices); on a
+        // resolved model number against a *constant* they yield the linear expression, which is what
+        // makes `tx.inputs[k].outpointIndex == tx.inputs[i].outpointIndex + 1` an exact constraint.
+        // Two unresolved/symbolic operands still go opaque (sums of values/amounts stay out of scope).
+        case Op.OP_ADD: { const b = pop(), a = pop(); push(addSub(a, b, 1)); break; }
+        case Op.OP_SUB: { const b = pop(), a = pop(); push(addSub(a, b, -1)); break; }
         // other arithmetic we don't model -> opaque number
         case Op.OP_MUL: case Op.OP_DIV: case Op.OP_MOD: case Op.OP_MIN: case Op.OP_MAX: case Op.OP_AND: case Op.OP_OR:
           pop(); pop(); push(num(null)); break;
         case Op.OP_ABS: pop(); push(num(null)); break; // unary
-        case Op.OP_1ADD: { const v = pop(); push(v.k === 'bytes' ? constBytes(numToBytes(bytesToNum(v.v) + 1)) : num(null)); break; }
-        case Op.OP_1SUB: { const v = pop(); push(v.k === 'bytes' ? constBytes(numToBytes(bytesToNum(v.v) - 1)) : num(null)); break; }
+        case Op.OP_1ADD: { const v = pop(); push(addSub(v, constBytes(numToBytes(1)), 1)); break; }
+        case Op.OP_1SUB: { const v = pop(); push(addSub(v, constBytes(numToBytes(1)), -1)); break; }
         case Op.OP_NEGATE: { pop(); push(num(null)); break; }
         case Op.OP_HASH160: case Op.OP_RIPEMD160: pop(); push({ k: 'sized', len: 20 }); break;
         case Op.OP_HASH256: case Op.OP_SHA256: pop(); push({ k: 'sized', len: 32 }); break;

@@ -52,6 +52,35 @@ function addStructure(z3: Z3, out: Bool[], slots: Utxo[]): void {
   });
 }
 
+/**
+ * Outpoint structure for the inputs (outputs have no outpoint).
+ *
+ * Two facts, both faithful:
+ *  - an outpoint index is a non-negative output index;
+ *  - no transaction spends the same outpoint twice, so the (txid, index) pairs of the present inputs
+ *    are pairwise distinct.
+ *
+ * The txid is modelled as an equality-only identity bounded to `0 .. nIn-1`. The covenants only ever
+ * compare two inputs' `outpointTransactionHash` to each other, so all that is observable is the
+ * partition of the inputs into "came from the same transaction" classes, and every partition of n
+ * inputs is realisable with n values: the bound excludes no transaction the model can distinguish.
+ * The index is left unbounded above so a contract comparing it against any value stays modelled.
+ */
+function addOutpointRules(z3: Z3, out: Bool[], tx: SymbolicTx): void {
+  const inputs = tx.inputs;
+  inputs.forEach((utxo, i) => {
+    out.push(utxo.outpointIndex.ge(0));
+    out.push(utxo.outpointTx.ge(0), utxo.outpointTx.le(Math.max(inputs.length - 1, 0)));
+    for (let j = 0; j < i; j++) {
+      const other = inputs[j]!;
+      out.push(z3.Implies(
+        z3.And(utxo.present, other.present),
+        z3.Or(utxo.outpointTx.neq(other.outpointTx), utxo.outpointIndex.neq(other.outpointIndex)),
+      ));
+    }
+  });
+}
+
 function isCat(utxo: Utxo, cat: number): Bool {
   return utxo.category.eq(cat);
 }
@@ -163,6 +192,7 @@ export function consensusRules(z3: Z3, tx: SymbolicTx, categories: number[]): Bo
   const out: Bool[] = [];
   addStructure(z3, out, tx.inputs);
   addStructure(z3, out, tx.outputs);
+  addOutpointRules(z3, out, tx);
   addTokenTally(z3, out, tx, categories);
   addImmutableMatching(z3, out, tx, categories);
   return out;
