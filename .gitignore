@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .tools/
+
+# local scratch drivers for the whole-system experiments
+scratch-*.ts

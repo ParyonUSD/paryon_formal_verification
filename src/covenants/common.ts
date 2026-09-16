@@ -1,22 +1,24 @@
-import { Capability, type Utxo } from '../model.js';
-import { type AdjacencyRule, type FunctionNftRule, type LeakPolicy, type OwnershipRule } from '../policy.js';
-import type { Num, Z3Solver } from '../z3.js';
+import { Capability } from '../model.js';
+import {
+  type AdjacencyRule, type FunctionNftRule, type LeakPolicy, type OwnershipRule, type StateShapeRule,
+} from '../policy.js';
 import { CAT, SCRIPT } from './ids.js';
 
 // Abstract category/script identity ids live in ./ids.js (arbitrary, equality-only).
 export { CAT, SCRIPT } from './ids.js';
 
 /**
- * Shared scaffolding for the loan subsystem: small constraint helpers, the
- * function-NFT identifier enums, and the loan leak policy + ownership building
- * blocks. Used by every loan-function model.
+ * The security *specification* of the ParyonUSD deployment: the identifiers the contracts
+ * authenticate each other by, and the five invariants `SYSTEM_POLICY` assumes of a transaction's
+ * inputs. With `covenants/registry.ts` this is the whole hand-written input to the proof — there is no
+ * contract logic here, only facts about the deployment that `verify_contract_deployment` establishes
+ * at genesis and the whole-system witnesses re-establish on every transaction's outputs.
  */
 
 /**
- * Function-NFT commitment identifiers (the single-byte ids the contracts authenticate by) and the
- * loan status byte — mirrors the canonical enums in @paryonusd/contracts. Used to pin commitments
- * where a contract branches on them (e.g. StabilityPool.interact'solver `commitment == 0x02`) instead of
- * hardcoding magic numbers. Modelled as numbers since commitments are integers in our model.
+ * Function-NFT commitment identifiers (the single-byte ids the contracts authenticate by) — mirrors
+ * the canonical enums in @paryonusd/contracts, so the policy names a function rather than a magic
+ * number. Modelled as numbers because commitments are integers in this model.
  */
 export const LoanFunction = {
   LIQUIDATED: 0x01,
@@ -46,9 +48,6 @@ const own = (category: number, capability: number, scripts: number[]): Ownership
   ({ category, capability, scripts });
 export const OWN = {
   paryonMutableLoanPrice: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN, SCRIPT.PRICE]),
-  paryonMutableLoan: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.LOAN]), // templates with no price input
-  paryonMutablePrice: own(CAT.PARYON, Capability.MUTABLE, [SCRIPT.PRICE]), // the price contract alone
-  poolMinting: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL]),
   poolMintingFull: own(CAT.POOL, Capability.MINTING, [SCRIPT.STABILITY_POOL, SCRIPT.PAYOUT]), // pool + each Payout
   poolMutableCollector: own(CAT.POOL, Capability.MUTABLE, [SCRIPT.COLLECTOR]),
   redeemerMutable: own(CAT.REDEEMER, Capability.MUTABLE, [SCRIPT.REDEMPTION]),
@@ -85,6 +84,11 @@ export const FUNCTION_NFTS: FunctionNftRule[] = [
   {
     category: CAT.PARYON, commitmentLength: 1,
     scripts: Object.keys(LOAN_FUNCTION_SITES).map(Number), commitments: LOAN_FUNCTION_SITES,
+    // The eight loan functions are the only paryon immutable NFTs with a non-empty commitment: the
+    // pool and redemption sidecars hold paryon *fungible* tokens with no NFT, and every other paryon
+    // NFT is the mutable loan or price state. `Redeemer.createRedemption` relies on it, authenticating
+    // the startRedemption NFT by leading byte without checking the commitment length.
+    exhaustiveNonEmpty: true,
   },
   {
     category: CAT.POOL, commitmentLength: 1,
@@ -113,53 +117,31 @@ export const SIDECAR_PAIRS: AdjacencyRule[] = [
 ];
 
 /**
- * A loan leak policy over the three internal authorities. `ownership` lists the
- * privileged-capability owners actually present in this template — omitting a
- * (category, capability) means it cannot legitimately appear on any input, which
- * is exactly how we say "no paryon-minting input exists in a loan transaction".
+ * The state NFTs' leading identifier bytes. A loan's mutable NFT always starts 0x01 and the price
+ * contract's always starts 0x00 — the byte the covenants authenticate each other by, never the locking
+ * script — so without the binding a price contract can stand in for a loan anywhere in the system.
+ * The other state NFTs (Borrowing, Collector, StabilityPool, Redemption, Payout) begin with a period
+ * counter, a token id or a public-key hash and have no fixed identifier to bind.
+ * Assumed on inputs, discharged on outputs by `stateShapeWitness`.
  */
-export function loanPolicy(ownership: OwnershipRule[]): LeakPolicy {
-  return { internalAuthorityCategories: INTERNAL_CATEGORIES, ownership, functionNfts: FUNCTION_NFTS };
-}
+export const STATE_SHAPES: StateShapeRule[] = [
+  { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.LOAN, head: 0x01 },
+  { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.PRICE, head: 0x00 },
+];
 
 /**
- * Per-function leak policies (the security *spec*: which categories are internal
- * authorities, and which covenant rightfully holds each privileged capability).
- * These are NOT transcribed contract logic — they parameterise the leak property
- * for each loan-function transaction, whose output pins are derived from the
- * compiled artifact bytecode (see src/script + tests/artifact-loan.test.ts).
- */
-export const POLICY = {
-  changeInterest: loanPolicy([OWN.paryonMutableLoan]),
-  manage: loanPolicy([OWN.paryonMutableLoanPrice]),
-  payInterest: loanPolicy([OWN.paryonMutableLoanPrice, OWN.poolMutableCollector]),
-  redeem: loanPolicy([OWN.paryonMutableLoan, OWN.redeemerMutable]),
-  swap: loanPolicy([OWN.paryonMutableLoan, OWN.redeemerMutable]),
-  // creates a Redemption (redeemer-mutable), so that owner is listed too
-  startRedemption: loanPolicy([OWN.paryonMutableLoanPrice, OWN.redeemerMinting, OWN.redeemerMutable]),
-  liquidate: loanPolicy([OWN.paryonMutableLoanPrice, OWN.poolMinting]),
-  // stability-pool functions
-  addLiquidity: loanPolicy([OWN.poolMinting]),
-  withdraw: loanPolicy([OWN.poolMinting]),
-  newPeriod: loanPolicy([OWN.poolMintingFull, OWN.poolMutableCollector]), // creates a Payout
-  payout: loanPolicy([OWN.poolMintingFull]),
-  // price contract on its own
-  updatePrice: loanPolicy([OWN.paryonMutablePrice]),
-  // borrowing + loanKey factory
-  borrow: loanPolicy([OWN.paryonMintingBorrowing, OWN.paryonMutableLoanPrice]),
-  loanKeyFactory: loanPolicy([OWN.loanKeyFactoryMinting]),
-} satisfies Record<string, LeakPolicy>;
-
-/**
- * The system-wide leak policy: the union of every per-template ownership rule, i.e. the real
- * deployment fact about where each privileged capability lives, with no transaction shape attached.
+ * The system invariant, in one place: everything the proof assumes about a transaction's inputs, and
+ * therefore everything it must re-establish on that transaction's outputs.
  *
- * A template's policy lists only the owners that template's transaction involves, which doubles as a
- * statement that the other privileged pairs cannot appear on its inputs. The whole-system model has no
- * transaction shape to scope, so it states the invariant once, for every capability at once: this is
- * the strongest form of the obligation (an output on *any* covenant that does not own its capability
- * is a leak) and the weakest form of the hypothesis (an input may carry any capability its real owner
- * holds), which is what lets one build cover every operation, batched or not.
+ *   ownership          where each privileged (category, capability) may sit   -> leakWitness
+ *   functionNfts       which script each function NFT sits on, with which id  -> forgedFunctionNftWitness
+ *                      and that a spent one is recreated                      -> preservationWitness
+ *   adjacency          the sidecar one outpoint index after a state NFT       -> adjacencyWitness
+ *   stateShapes        the loan/price state's leading identifier byte         -> stateShapeWitness
+ *
+ * It is stated for the whole system at once, with no transaction shape attached, which is what lets a
+ * single build cover every operation — batched operations included. `verify_contract_deployment`
+ * establishes the same five facts of the genesis state, which is the base case of the induction.
  */
 export const SYSTEM_POLICY: LeakPolicy = {
   internalAuthorityCategories: INTERNAL_CATEGORIES,
@@ -174,45 +156,5 @@ export const SYSTEM_POLICY: LeakPolicy = {
   ],
   functionNfts: FUNCTION_NFTS,
   adjacency: SIDECAR_PAIRS,
+  stateShapes: STATE_SHAPES,
 };
-
-export interface UtxoSpec {
-  script?: number;
-  category?: number;
-  capability?: number;
-  fts?: number | Num;
-  value?: number | Num;
-  /** NFT commitment as an integer (used to pin function-NFT identifiers). */
-  commitment?: number;
-  /** NFT commitment byte length. */
-  commitmentLength?: number;
-}
-
-/** Mark a slot present and constrain the provided fields. */
-export function pin(solver: Z3Solver, utxo: Utxo, spec: UtxoSpec): void {
-  solver.add(utxo.present);
-  if (spec.script !== undefined) solver.add(utxo.script.eq(spec.script));
-  if (spec.category !== undefined) solver.add(utxo.category.eq(spec.category));
-  if (spec.capability !== undefined) solver.add(utxo.capability.eq(spec.capability));
-  if (spec.fts !== undefined) solver.add(utxo.fts.eq(spec.fts));
-  if (spec.value !== undefined) solver.add(utxo.value.eq(spec.value));
-  if (spec.commitment !== undefined) solver.add(utxo.commitment.eq(spec.commitment));
-  if (spec.commitmentLength !== undefined) solver.add(utxo.commitmentLength.eq(spec.commitmentLength));
-}
-
-/** A loan input: paryon mutable NFT (no fungible) on the loan script. */
-export function loanInput(solver: Z3Solver, utxo: Utxo): void {
-  pin(solver, utxo, { category: CAT.PARYON, capability: Capability.MUTABLE, script: SCRIPT.LOAN, fts: 0 });
-}
-
-/** A loan function NFT input: paryon immutable on the function'solver script, carrying its commitment id. */
-export function functionNftInput(solver: Z3Solver, utxo: Utxo, scriptId: number, commitment?: number): void {
-  pin(solver, utxo, {
-    category: CAT.PARYON, capability: Capability.IMMUTABLE, script: scriptId, fts: 0, commitment, commitmentLength: 1,
-  });
-}
-
-/** A loan token sidecar input: a (user-facing) loanKey immutable NFT on the sidecar script. */
-export function loanSidecarInput(solver: Z3Solver, utxo: Utxo, categoryId: number = CAT.LOANKEY): void {
-  pin(solver, utxo, { category: categoryId, capability: Capability.IMMUTABLE, script: SCRIPT.LOAN_SIDECAR, fts: 0 });
-}

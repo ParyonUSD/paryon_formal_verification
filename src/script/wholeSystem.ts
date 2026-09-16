@@ -39,7 +39,7 @@ export interface WholeSystemConfig {
   nOutputs: number;
   /** Category ids the consensus tally is enforced over. */
   categories: number[];
-  /** The one global policy (ownership + function NFTs); see SYSTEM_POLICY. */
+  /** The one global invariant, assumed of the inputs; see SYSTEM_POLICY. */
   policy: LeakPolicy;
   registry: CovenantRegistry;
   /** Covenant scripts outside the registry: kept off the inputs (scope, see the file comment). */
@@ -104,8 +104,13 @@ export interface BuiltWholeSystem {
    * A fresh solver carrying `shared` plus the given assertions. Every query gets its own solver: it is
    * exported as SMT-LIB and decided in a native z3 process (`checkNative`), so there is no incremental
    * state to share and no push/pop.
+   *
+   * `withoutCovenants` drops the per-input covenant implications and keeps only the consensus rules
+   * and the inductive hypothesis. It is the positive control for every witness: a witness that is
+   * unsat with the covenants and *sat* without them is unsat *because of the contracts*, which is the
+   * claim. One that is unsat either way proves nothing and is a bug in the witness.
    */
-  solverFor(extra?: Bool[]): Z3Solver;
+  solverFor(extra?: Bool[], options?: { withoutCovenants?: boolean }): Z3Solver;
   /** Every solver handed out, kept referenced (z3-solver frees from a GC finalizer; see fromArtifact). */
   keepAlive: Z3Solver[];
   /** "Some input runs this function": its script at that index AND one of its paths there. */
@@ -180,19 +185,29 @@ export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSyst
   const unmodelled = cfg.unmodelledScripts ?? [];
   const inScope = tx.inputs.flatMap((utxo) => unmodelled.map((id) => z3.Not(utxo.script.eq(id))));
 
-  const shared: Bool[] = [
+  // A leak needs an output slot no covenant pins. If the capacity ended exactly at the highest index a
+  // covenant reads, the attacker's extra output would have nowhere to go and every witness would be
+  // unsat because the model is too small, not because the contracts are safe.
+  if (cfg.nOutputs < stats.maxOutputIndex + 2) {
+    throw new Error(
+      `capacity is ${cfg.nOutputs} outputs but a covenant references output ${stats.maxOutputIndex}; `
+      + `allow at least ${stats.maxOutputIndex + 2} so an unpinned output can exist`,
+    );
+  }
+
+  const base: Bool[] = [
     ...consensusRules(z3, tx, cfg.categories),
     inputsRespectInvariant(z3, tx, cfg.policy),
     ...noBurnInputs,
     ...inScope,
-    ...definitions,
-    ...implications,
   ];
+  const covenants: Bool[] = [...definitions, ...implications];
+  const shared: Bool[] = [...base, ...covenants];
 
   const keepAlive: Z3Solver[] = [];
-  const solverFor = (extra: Bool[] = []): Z3Solver => {
+  const solverFor = (extra: Bool[] = [], options: { withoutCovenants?: boolean } = {}): Z3Solver => {
     const solver = newSolver(z3);
-    solver.add(...shared, ...extra);
+    solver.add(...(options.withoutCovenants === true ? base : shared), ...extra);
     keepAlive.push(solver);
     return solver;
   };
@@ -219,7 +234,7 @@ export function buildWholeSystem(z3: Z3, cfg: WholeSystemConfig): BuiltWholeSyst
 /**
  * The stack at contract entry (bottom -> top): function args, then the selector for a multi-function
  * contract, then the constructor args pushed by the redeem prefix in reverse. Identical to
- * `buildFromArtifact`'s seeding — the artifact is the same, only the choice of active index differs.
+ * what the redeem prefix pushes on chain; the only free choice here is the active index.
  */
 function initialStackFor(entry: RegisteredCovenant, abiIndex: number): SVal[] {
   const fn = entry.artifact.abi[abiIndex]!;

@@ -243,17 +243,36 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
     if (v.k === 'cat') {
       for (const part of v.parts) {
-        const len = lengthOf(part);
-        if (len === 0) continue; // a statically empty part contributes nothing
-        // Only a part whose length is *statically* at least one is known to carry the first byte. A
-        // commitment field has a symbolic length and may be empty at run time, in which case the first
-        // byte comes from whatever follows it — so `in.commitment + 0x05` has no known head, and
-        // claiming `in.commitment`'s head would reject a transaction the VM accepts.
-        return typeof len === 'number' && len >= 1 ? headView(part) : null;
+        if (lengthOf(part) === 0) continue; // a statically empty part contributes nothing
+        // The first byte of a concatenation is the first part's only if that part is certainly
+        // non-empty. A commitment field may be empty at run time, and then the byte comes from
+        // whatever follows it — so `in.commitment + 0x05` has no known head, and claiming the field's
+        // would reject a transaction the VM accepts. `certainlyNonEmpty` asks for a statically known
+        // byte somewhere in the part, which a nested `0x01 + toPaddedBytes(..) + field` still has even
+        // though its total length is symbolic.
+        return certainlyNonEmpty(part) ? headView(part) : null;
       }
     }
     return null;
   }
+  /**
+   * A statically known lower bound on a value's byte length: the parts whose size is known from the
+   * program text, with anything run-time-dependent counted as possibly empty. Used only to decide
+   * whether a value is certainly non-empty, so under-counting is always safe.
+   */
+  function concreteMinLength(v: SVal): number {
+    switch (v.k) {
+      case 'bytes': return v.v.length;
+      case 'sized': return v.len;
+      case 'outpoint': return 32;
+      case 'seed': return v.seed.kind === 'category' ? 32 : 0;
+      case 'split': return v.side === 'L' ? v.at : 0;
+      case 'cat': return v.parts.reduce((total, part) => total + concreteMinLength(part), 0);
+      default: return 0; // a field, an opaque value: may be empty
+    }
+  }
+  const certainlyNonEmpty = (v: SVal): boolean => concreteMinLength(v) >= 1;
+
   const headEquality = (x: HeadView, y: HeadView): Bool => {
     const guard = bothGuards(x.guard, y.guard);
     const eq = eqInt(x.head, y.head);
