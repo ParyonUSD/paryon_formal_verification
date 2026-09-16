@@ -114,9 +114,13 @@ function capOfCat(z3: Z3, utxo: Utxo, cat: number, capability: number): Bool {
  * A minting input lifts all four for that category (unlimited NFTs of any
  * capability), so such contracts must instead bound their outputs explicitly.
  *
- * Genesis note: a brand-new category can be minted by an input whose outpoint
- * index is 0. We do not model outpoints; we assume no analysed transaction
- * genesis-creates a privileged category (their ids are historical/unforgeable).
+ * Genesis note: a brand-new category can be minted by an input whose outpoint index is 0, and its id
+ * is that input's outpoint transaction hash. Outpoints ARE modelled now, and a contract that mints
+ * this way states the precondition itself — `LoanKeyFactory.create` compiles
+ * `require(tx.inputs[0].outpointIndex == 0)` to `OP_0 OP_OUTPOINTINDEX OP_0 OP_NUMEQUALVERIFY`, which
+ * the model decides exactly — so the tally needs no genesis rule of its own. What remains assumed is
+ * that no analysed transaction genesis-creates a *privileged* category: their ids are historical, so
+ * an input's outpoint transaction hash colliding with one is not a transaction anyone can build.
  *
  * Fungible-token conservation is intentionally omitted: fungible tokens carry no
  * capability, so they are irrelevant to leak-freedom (a separate property).

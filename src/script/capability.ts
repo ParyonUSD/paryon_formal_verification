@@ -22,9 +22,14 @@ import { bytesToNum, leadingByte, type SVal } from './value.js';
  * vs a script vs a genesis mint, and how capability classes are encoded.
  */
 
-// Category id base for genesis-minted categories (per genesis input index). Distinct from the
-// registry'solver category ids and outside the tallied/internal sets — a fresh, user-facing category.
-// (LoanKeyFactory mints one as reservedTokenId + 0x02.)
+// Category id base for genesis-minted categories, offset by the *identity of the spent transaction*
+// (see catView). Distinct from the registry's category ids and outside the tallied/internal sets — a
+// fresh, user-facing category. (LoanKeyFactory mints one as reservedTokenId + 0x02.)
+//
+// Keyed by `outpointTx`, not by the input's position: a genesis category IS the spent transaction's
+// hash, so two inputs spending outputs of the same transaction derive the *same* category and inputs
+// spending different transactions derive different ones. Position keying got both backwards. The range
+// (GENESIS_BASE .. GENESIS_BASE + nIn - 1) must stay above every registry id and within MAX_CATEGORY.
 const GENESIS_BASE = 20;
 // Suffix classes of a category-like byte string, i.e. what `tokenCategory` (+ an appended capability
 // byte) can serialise to. 0..3 are the introspection results; 4..9 arise only from appending a byte
@@ -116,7 +121,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       // class maps to one of the non-category classes 4..9 (see APPEND_CLASS), which keeps equality
       // exact: `0x + 02` equals `0x + 02` but never a category, and never `0x + 01`.
       const base = catView(a!);
-      const baseCatId = base?.catId ?? (a!.k === 'outpoint' ? GENESIS_BASE + a!.i : null);
+      const baseCatId: Num | number | null = base?.catId
+        ?? (a!.k === 'outpoint' ? tx.inputs[a!.i]!.outpointTx.add(GENESIS_BASE) : null);
       const suffix = b!.k === 'bytes' && b!.v.length === 1 && (b!.v[0] === Capability.MUTABLE || b!.v[0] === Capability.MINTING)
         ? b!.v[0] : null;
       if (baseCatId !== null && suffix !== null) {
