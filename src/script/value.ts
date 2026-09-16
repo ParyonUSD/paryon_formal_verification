@@ -67,6 +67,9 @@ export function numToBytes(n: number): Uint8Array {
   const out: number[] = [];
   let magnitude = Math.abs(n);
   while (magnitude > 0) { out.push(magnitude & 0xff); magnitude = Math.floor(magnitude / 256); }
+  // Sign-magnitude: the top bit of the last byte is the sign, so a magnitude whose own top bit is set
+  // (128, 32768, ...) needs an extra byte to carry it (128 is 0x8000, not 0x80 which reads as -0).
+  if ((out[out.length - 1]! & 0x80) !== 0) out.push(0);
   if (n < 0) out[out.length - 1]! |= 0x80;
   return new Uint8Array(out);
 }

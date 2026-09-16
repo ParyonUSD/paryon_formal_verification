@@ -198,8 +198,11 @@ export function interpret(z3: Z3, tx: SymbolicTx, script: ScriptOps, opts: Inter
         case Op.OP_NEGATE: { pop(); push(num(null)); break; }
         case Op.OP_HASH160: case Op.OP_HASH256: case Op.OP_SHA256: case Op.OP_RIPEMD160:
           pop(); push(OPAQUE); break;
-        case Op.OP_CHECKSIG: case Op.OP_CHECKDATASIG: pop(); pop(); push({ k: 'bool', e: null }); break;
-        case Op.OP_CHECKSIGVERIFY: case Op.OP_CHECKDATASIGVERIFY: pop(); pop(); break;
+        // CHECKSIG takes (sig, pubkey); CHECKDATASIG takes (sig, message, pubkey).
+        case Op.OP_CHECKSIG: pop(); pop(); push({ k: 'bool', e: null }); break;
+        case Op.OP_CHECKSIGVERIFY: pop(); pop(); break;
+        case Op.OP_CHECKDATASIG: pop(); pop(); pop(); push({ k: 'bool', e: null }); break;
+        case Op.OP_CHECKDATASIGVERIFY: pop(); pop(); pop(); break;
         // timelock checks read (don't pop) the top item; no capability effect.
         case Op.OP_CHECKLOCKTIMEVERIFY: case Op.OP_CHECKSEQUENCEVERIFY: case Op.OP_NOP: break;
 

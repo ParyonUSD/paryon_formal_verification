@@ -18,10 +18,10 @@ export function bytesToNum(bytes: Uint8Array): number {
   for (let i = 0; i < bytes.length; i++) value += bytes[i]! * 2 ** (8 * i);
   const signBit = 0x80;
   if ((bytes[bytes.length - 1]! & signBit) !== 0) {
-    // negative (sign bit set) — not expected for our indices/values, but handle correctly.
-    value -= 2 ** (8 * bytes.length - 1);
+    // CScriptNum is sign-magnitude: the top bit is the sign, the rest the magnitude (0x81 == -1).
+    value = -(value - 2 ** (8 * bytes.length - 1));
   }
-  return value;
+  return value === 0 ? 0 : value; // never -0 (negative zero encodes 0)
 }
 
 /** The small-integer opcodes OP_1..OP_16 push the numbers 1..16; OP_1NEGATE pushes -1. */

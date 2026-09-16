@@ -165,7 +165,8 @@ export function generateScript(cfg: GenConfig): Generated {
   /** Pushes a number; returns whether it is symbolic to the model (a count) or a plain constant. */
   const numOperand = (forceSymbolic: boolean): boolean => {
     if (!forceSymbolic && rng.bool(0.4)) {
-      pushNum(rng.int(Math.max(cfg.capacity.nIn, cfg.capacity.nOut) + 2));
+      // Small constants, occasionally negative (OP_1NEGATE / sign-magnitude encodings).
+      pushNum(rng.bool(0.2) ? -(1 + rng.int(3)) : rng.int(Math.max(cfg.capacity.nIn, cfg.capacity.nOut) + 2));
       return false;
     }
     if (wide(0.3)) { opaqueNum(); return false; }
@@ -295,9 +296,13 @@ export function generateScript(cfg: GenConfig): Generated {
       return s1 && s2;
     }
     if (wide(0.08)) { // opaque predicates
-      const w = rng.int(3);
+      const w = rng.int(4);
       if (w === 0) { // empty signature against a well-formed pubkey: a clean `false`, no NULLFAIL error
         emit(Op.OP_0, 1); pushData(Uint8Array.from([0x02, ...rng.bytes(32)])); emit(Op.OP_CHECKSIG, -1);
+        return false;
+      }
+      if (w === 3) { // CHECKDATASIG takes three operands (sig, message, pubkey); an empty sig yields `false`
+        emit(Op.OP_0, 1); junk(); pushData(Uint8Array.from([0x02, ...rng.bytes(32)])); emit(Op.OP_CHECKDATASIG, -2);
         return false;
       }
       if (w === 1) { opaqueNum(); emit(Op.OP_0NOTEQUAL, 0); return false; }
