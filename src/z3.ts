@@ -41,8 +41,6 @@ export async function getContext(): Promise<Z3> {
   p[KEY] ??= init().then(({ Context, Z3: lowLevel }) => {
     const ctx = Context('main');
     lowLevel.enable_concurrent_dec_ref(ctx.ptr);
-    // A runaway search must fail as an exception, not by aborting the wasm heap (2 GB, no growth).
-    lowLevel.global_param_set('memory_max_size', '1400');
     return ctx;
   });
   return p[KEY];

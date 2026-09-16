@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { addConsensusRules } from '../src/consensus.js';
-import { Capability, NO_CATEGORY, Script, declareTx } from '../src/model.js';
+import { consensusRules } from '../src/consensus.js';
+import { Capability, NO_CATEGORY, Script, declareTx, type SymbolicTx } from '../src/model.js';
 import {
   Universe, fixTx, genConcreteTx, makeRng, verifyTokensWithLibauth, type ConcreteTx, type ConcreteUtxo,
 } from '../src/oracle/concrete.js';
-import { getContext, newSolver, type Z3, type Z3Solver } from '../src/z3.js';
+import { getContext, newSolver, type Bool, type Z3, type Z3Solver } from '../src/z3.js';
 
 /**
  * Differential test of the hand-written CashTokens tally (src/consensus.ts) against libauth's
@@ -23,12 +23,17 @@ const CATEGORIES = [1, 2, 3];
 const SCRIPTS = [Script.ATTACKER, Script.BURN, Script.FIRST_COVENANT, Script.FIRST_COVENANT + 1];
 
 let z3: Z3;
-beforeAll(async () => { z3 = await getContext(); });
+let tx: SymbolicTx; // shared across cases: fixTx pins every field, and the rules are built once
+let rules: Bool[];
+beforeAll(async () => {
+  z3 = await getContext();
+  tx = declareTx(z3, CAPACITY.nIn, CAPACITY.nOut);
+  rules = consensusRules(z3, tx, CATEGORIES);
+});
 
 function modelSolver(ctx: ConcreteTx): Z3Solver {
-  const tx = declareTx(z3, CAPACITY.nIn, CAPACITY.nOut);
   const solver = newSolver(z3);
-  addConsensusRules(z3, solver, tx, CATEGORIES);
+  solver.add(...rules);
   fixTx(z3, solver, tx, ctx);
   return solver;
 }

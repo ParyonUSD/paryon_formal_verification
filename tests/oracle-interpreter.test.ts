@@ -1,6 +1,6 @@
 import { disassembleBytecodeBch } from '@bitauth/libauth';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Script, declareTx } from '../src/model.js';
+import { Script, declareTx, type SymbolicTx } from '../src/model.js';
 import { interpret } from '../src/script/interpreter.js';
 import {
   Universe, evaluateWithLibauth, fixTx, genConcreteTx, makeRng, scriptToBytecode, type ConcreteTx,
@@ -31,7 +31,8 @@ const COVENANTS = [Script.FIRST_COVENANT, Script.FIRST_COVENANT + 1, Script.FIRS
 const SCRIPTS = [Script.ATTACKER, Script.BURN, ...COVENANTS];
 
 let z3: Z3;
-beforeAll(async () => { z3 = await getContext(); });
+let tx: SymbolicTx; // one symbolic transaction for every case: fixTx pins all of it, so sharing is exact and cheap
+beforeAll(async () => { z3 = await getContext(); tx = declareTx(z3, CAPACITY.nIn, CAPACITY.nOut); });
 
 interface CaseResult {
   seed: number;
@@ -64,7 +65,6 @@ async function runCase(seed: number, exact: boolean): Promise<CaseResult> {
 
   const real = evaluateWithLibauth(universe, ctx, activeIndex, gen.args);
 
-  const tx = declareTx(z3, CAPACITY.nIn, CAPACITY.nOut);
   let paths;
   try {
     paths = interpret(z3, tx, gen.body, { activeIndex, initialStack: gen.initialStack, maxPaths: 512 });
