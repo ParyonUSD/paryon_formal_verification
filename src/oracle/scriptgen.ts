@@ -152,7 +152,12 @@ export function generateScript(cfg: GenConfig): Generated {
 
   const commitOperand = (forceField = false): void => {
     if (!forceField && rng.bool(0.4)) {
-      if (wide(0.4)) pushData(rng.pick([Uint8Array.of(0), Uint8Array.of(2, 0), Uint8Array.of(0x80), rng.bytes(3)]));
+      if (wide(0.3)) { // opaque content of a known length
+        pushNum(rng.int(300)); pushNum(1 + rng.int(4)); emit(Op.OP_NUM2BIN, -1);
+      }
+      else if (wide(0.4)) {
+        pushData(rng.pick([Uint8Array.of(0), Uint8Array.of(2, 0), Uint8Array.of(0x80), rng.bytes(3)]));
+      }
       else pushData(minimalCommitment(rng));
       return;
     }
@@ -170,12 +175,27 @@ export function generateScript(cfg: GenConfig): Generated {
       return false;
     }
     if (wide(0.3)) { opaqueNum(); return false; }
-    // Counts, satoshi values and fungible amounts are all model Ints (exact in comparisons).
-    switch (rng.int(5)) {
+    // Counts, satoshi values, fungible amounts, and the byte lengths of commitments and categories are
+    // all model Ints (exact in comparisons).
+    switch (rng.int(7)) {
       case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); break;
       case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); break;
       case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); break;
       case 3: pushNum(outIdx()); emit(Op.OP_OUTPUTTOKENAMOUNT, 0); break;
+      case 4: {
+        const side = rng.bool() ? 'in' : 'out';
+        pushNum(side === 'in' ? inIdx() : outIdx());
+        emit(side === 'in' ? Op.OP_UTXOTOKENCOMMITMENT : Op.OP_OUTPUTTOKENCOMMITMENT, 0);
+        emit(Op.OP_SIZE, 1); emit(Op.OP_NIP);
+        break;
+      }
+      case 5: {
+        const side = rng.bool() ? 'in' : 'out';
+        pushNum(side === 'in' ? inIdx() : outIdx());
+        emit(side === 'in' ? Op.OP_UTXOTOKENCATEGORY : Op.OP_OUTPUTTOKENCATEGORY, 0);
+        emit(Op.OP_SIZE, 1); emit(Op.OP_NIP);
+        break;
+      }
       default: emit(rng.bool() ? Op.OP_TXOUTPUTCOUNT : Op.OP_TXINPUTCOUNT, 1); break;
     }
     return true;

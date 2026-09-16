@@ -73,6 +73,37 @@ symbolic interpreter side by side (see README, "Checked against libauth"). Build
   opaque, and commitment constants beyond the exact-integer range carry no constraint rather than
   crashing the interpreter.
 
+## The function-NFT authenticity invariant
+
+`Loan.interact` and `StabilityPool.interact` authenticate the delegated function NFT by bare category
+plus `commitment.length == 1` and never by script, so the induction silently depended on "no NFT of
+that shape exists off the function scripts". Making that a checked invariant needed three things:
+
+- **Commitment lengths.** Each slot carries `commitmentLength`; introspection of a UTXO without an
+  NFT gives length 0; `OP_SIZE` is exact; `OP_NUM2BIN` yields an opaque value of known length (as do
+  hashes); CAT/SPLIT propagate lengths; a concatenation with an opaque part contributes a lower bound
+  (`toPaddedBytes(x, 4) + bytes(y)` is at least 4 bytes — enough to separate a receipt from a one-byte
+  function identifier). Commitment equalities now assert the int reading *and* the length (still
+  lossy: `0x80` and `0x00` both read 0 of length 1).
+- **Immutable-commitment matching** (tally rule 4): a boolean match matrix between immutable outputs
+  and immutable inputs of the same category and commitment, each side matched at most once, and
+  `mutable_out + unmatched_immutable_out <= mutable_in` per category without a minting input. The
+  consensus oracle confirms it against libauth; the identity is coarser than byte identity, which only
+  admits more matchings (sound).
+- **The witness.** `inputsRespectInvariant` assumes the shape sits on a function script;
+  `forgedFunctionNftWitness` fires on any output of that shape off the function scripts and not
+  burned, queried with the governed-inputs restriction like preservation. Every template proves it.
+
+Doing this exposed a third interpreter routing bug the oracle had not reached: `OP_CHECKDATASIG` and
+its VERIFY form popped two operands instead of three, so everything below them in
+`PriceContract.updatePrice` was mis-routed and its earlier proof ran on a wrong stack. The fuzzer now
+emits CHECKDATASIG, negative constants (the CScriptNum decoder was also not sign-magnitude), NUM2BIN
+and `OP_SIZE` of commitments and categories.
+
+The larger problems also showed z3-solver's wasm bindings to be unreliable (see README): the proofs
+now run in a native z3 process per query from SMT-LIB text, one fresh solver per query, with the
+consensus and witness expressions built once per transaction.
+
 ## Coverage of the artifact derivation
 
 Every covenant is now derived from artifact bytecode — there are **no hand-modelled covenants left**.

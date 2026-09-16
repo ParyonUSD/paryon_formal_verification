@@ -63,6 +63,8 @@ export interface CapabilityModel {
   numEqResult(a: SVal, b: SVal): SVal;
   /** The result of a numeric ordering compare (`OP_LESSTHAN` etc.) as a bool SVal. */
   compare(op: number, top: SVal, second: SVal): SVal;
+  /** The byte length of a stack value as a model Int (`OP_SIZE`), or null when unknown. */
+  lengthOf(v: SVal): Num | null;
 }
 
 export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number): CapabilityModel {
@@ -172,26 +174,100 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
   const countExpr = intField;
 
   // NFT commitment as a model Int, for function-NFT identifier branches (e.g. commitment == 0x02).
-  const commitExpr = (v: SVal): Num | null =>
-    v.k === 'field' && v.f === 'utxoCommit' ? tx.inputs[v.i]!.commitment
-      : v.k === 'field' && v.f === 'outCommit' ? tx.outputs[v.i]!.commitment
-        : null;
+  const commitSlot = (v: SVal) =>
+    v.k === 'field' && v.f === 'utxoCommit' ? tx.inputs[v.i]! : v.k === 'field' && v.f === 'outCommit' ? tx.outputs[v.i]! : null;
+  const commitExpr = (v: SVal): Num | null => commitSlot(v)?.commitment ?? null;
+
+  // ---- byte lengths ----
+  // Exact where the structure is known: constants, sized opaques (NUM2BIN, hashes), commitment fields,
+  // tokenCategory fields (0 / 32 / 33 by class), seeds, outpoint hashes, and CAT/SPLIT of those.
+  // (A split whose position exceeds the length fails on chain; the model just admits it: superset.)
+  function lengthOf(v: SVal): Num | number | null {
+    switch (v.k) {
+      case 'bytes': return v.v.length;
+      case 'sized': return v.len;
+      case 'outpoint': return 32;
+      case 'seed': return v.seed.kind === 'category' ? 32 : null;
+      case 'field': {
+        const slot = commitSlot(v);
+        if (slot) return slot.commitmentLength;
+        if (v.f === 'utxoCat' || v.f === 'outCat') {
+          const cls = catClass(v.i, v.f === 'utxoCat' ? 'in' : 'out');
+          return z3.If(cls.eq(0), z3.Int.val(0), z3.If(cls.eq(1), z3.Int.val(32), z3.Int.val(33)));
+        }
+        return null;
+      }
+      case 'split': {
+        if (v.side === 'L') return v.at;
+        const inner = lengthOf(v.v);
+        return inner === null ? null : (typeof inner === 'number' ? inner - v.at : inner.sub(v.at));
+      }
+      case 'cat': {
+        let total: Num | number = 0;
+        for (const part of v.parts) {
+          const len = lengthOf(part);
+          if (len === null) return null;
+          total = typeof total === 'number' && typeof len === 'number' ? total + len
+            : (typeof total === 'number' ? (len as Num).add(total) : total.add(len));
+        }
+        return total;
+      }
+      default: return null;
+    }
+  }
+  const lengthNum = (v: SVal): Num | null => {
+    const len = lengthOf(v);
+    return len === null ? null : typeof len === 'number' ? z3.Int.val(len) : len;
+  };
+  /**
+   * A lower bound on the byte length when the exact length is unknown: the known parts of a
+   * concatenation (`toPaddedBytes(x, 4) + bytes(y)` is at least 4 bytes). Exact when known.
+   */
+  function minLengthOf(v: SVal): Num | number {
+    const exact = lengthOf(v);
+    if (exact !== null) return exact;
+    if (v.k === 'cat') {
+      return v.parts.reduce<Num | number>((acc, part) => {
+        const m = minLengthOf(part);
+        return typeof acc === 'number' && typeof m === 'number' ? acc + m : (typeof acc === 'number' ? (m as Num).add(acc) : acc.add(m));
+      }, 0);
+    }
+    if (v.k === 'split' && v.side === 'L') return v.at;
+    return 0;
+  }
 
   function equalConstraint(a: SVal, b: SVal): EqualityResult {
     const ca = catView(a), cb = catView(b);
     if (ca && cb) return exact(eqCategory(ca, cb));
     const sc = eqScript(a, b);
     if (sc) return lossy(sc); // script ids are class identities
-    // Commitment equalities: resolve `commitment == constByte` / `out.commit == in.commit`
-    // so function-NFT identifier branches (and recreations) decide correctly. The int reading of a
-    // commitment is only a necessary condition for byte equality (0x00 and 0x read as the same int),
-    // hence lossy; constants beyond the exact integer range carry no constraint at all.
-    const ka = commitExpr(a), kb = commitExpr(b);
-    if (ka !== null && kb !== null) return lossy(eqInt(ka, kb));
-    if (ka !== null && b.k === 'bytes') return b.v.length <= MAX_COMMITMENT_CONST_BYTES ? lossy(eqInt(ka, bytesToNum(b.v))) : NONE;
-    if (kb !== null && a.k === 'bytes') return a.v.length <= MAX_COMMITMENT_CONST_BYTES ? lossy(eqInt(kb, bytesToNum(a.v))) : NONE;
+    // Commitment equalities: `commitment == constByte`, `out.commit == in.commit`, and
+    // `commit == toPaddedBytes(..) + ..` resolve to the conjunction of whatever is known about both
+    // sides: the int reading (fields, short constants) and the byte length (fields, constants, NUM2BIN
+    // and CAT/SPLIT of those). Both are necessary conditions for byte equality, not sufficient (the
+    // int reading identifies 0x00 and 0x80), hence lossy. Nothing known on one side -> no constraint.
+    if (commitSlot(a) || commitSlot(b)) {
+      const parts: Bool[] = [];
+      const ia = commitIntOf(a), ib = commitIntOf(b);
+      if (ia !== null && ib !== null) parts.push(eqInt(ia, ib));
+      const la = lengthOf(a), lb = lengthOf(b);
+      if (la !== null && lb !== null) parts.push(eqInt(la, lb));
+      else if (la !== null || lb !== null) {
+        // One side's length is only bounded below (a concatenation with an opaque part): equality still
+        // implies the known side is at least that long — enough to tell a 10-byte receipt from a
+        // 1-byte function identifier.
+        const known = (la ?? lb) as Num | number, bound = la !== null ? minLengthOf(b) : minLengthOf(a);
+        const knownE = typeof known === 'number' ? z3.Int.val(known) : known;
+        parts.push(typeof bound === 'number' ? knownE.ge(bound) : knownE.ge(bound));
+      }
+      return parts.length > 0 ? lossy(z3.And(...parts)) : NONE;
+    }
     return NONE; // value / amount / opaque -> no capability content
   }
+
+  // The int reading of a commitment-like value: a commitment field, or a constant in exact-int range.
+  const commitIntOf = (v: SVal): Num | number | null =>
+    commitExpr(v) ?? (v.k === 'bytes' && v.v.length <= MAX_COMMITMENT_CONST_BYTES ? bytesToNum(v.v) : null);
 
   function numEqResult(a: SVal, b: SVal): SVal {
     const ea = countExpr(a), eb = countExpr(b);
@@ -228,7 +304,7 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
   }
 
-  return { equalConstraint, numEqResult, compare };
+  return { equalConstraint, numEqResult, compare, lengthOf: lengthNum };
 }
 
 function countPresent(z3: Z3, tx: SymbolicTx, of: 'in' | 'out'): Num {

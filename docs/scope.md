@@ -21,8 +21,14 @@ The model captures exactly what governs capability movement:
 - satoshi **values** and fungible **amounts** where a contract *compares* them (`tokenAmount == 0`,
   `value == 1000`, `out.value >= in.value`): exact model integers, arithmetic on them stays opaque.
 
-Alongside the leak witness, a **function-NFT preservation** witness (liveness): an immutable
-function NFT spent by a transaction must be recreated on its script with its commitment.
+- NFT **commitment lengths** (exact through constants, NUM2BIN, hashes, CAT/SPLIT and `OP_SIZE`; a
+  lower bound where a concatenation has an opaque part) and the tally's **immutable-commitment
+  matching** rule, so a fresh immutable NFT can only come from a mutable input of its category.
+
+Alongside the leak witness: a **forged-function-NFT** witness (authenticity — no output with a
+function NFT's shape, immutable + one-byte commitment of the paryon/pool category, off the function
+scripts), and a **function-NFT preservation** witness (liveness — an immutable function NFT spent by
+a transaction must be recreated on its script with its commitment).
 
 ## What is NOT checked (and why that's sound)
 
