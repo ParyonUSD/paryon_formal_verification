@@ -148,8 +148,18 @@ export const STATE_SHAPES: StateShapeRule[] = [
  *   stateShapes        the loan/price state's leading identifier byte         -> stateShapeWitness
  *
  * It is stated for the whole system at once, with no transaction shape attached, which is what lets a
- * single build cover every operation — batched operations included. `verify_contract_deployment`
- * establishes the same five facts of the genesis state, which is the base case of the induction.
+ * single build cover every operation — batched operations included.
+ *
+ * The base case is the genesis state, and `verify_contract_deployment` is what **must** establish the
+ * same facts of it. Most it already checks: the capability and commitment of every privileged NFT on
+ * its owning contract (ownership), one function NFT per function contract with its own one-byte
+ * identifier (functionNfts), and the adjacency of each state NFT and its sidecar in the genesis
+ * outputs (adjacency). Open obligations, tracked there rather than assumed away here:
+ *
+ *   - stateShapes: the price contract's genesis commitment is checked for length 9 but not for its
+ *     leading 0x00, so "a price state starts 0x00" is not yet established at genesis;
+ *   - functionNfts (exhaustiveNonEmpty): that genesis created no paryon immutable NFT with a
+ *     non-empty commitment anywhere but the eight function contracts.
  */
 export const SYSTEM_POLICY: LeakPolicy = {
   internalAuthorityCategories: INTERNAL_CATEGORIES,
