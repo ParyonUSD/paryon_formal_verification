@@ -32,9 +32,21 @@ See [docs/scope.md](docs/scope.md) for the full breakdown of what is and is not 
 
 ## Layout
 
-The engine (general BCH/CashTokens) lives in `src/` (`z3.ts`, `model.ts`, `consensus.ts`, `policy.ts`, `covenant.ts`, `script/*`); the ParyonUSD instantiation lives in `src/covenants/` (the `ids.ts` registry and `common.ts` policy/helpers) and `tests/`. The consensus tally is the trusted base: without a minting input it enforces `minting_out == 0`, `mutable_out <= mutable_in`, and `nft_out <= nft_in` per category. See [docs/scope.md](docs/scope.md) for the per-file map.
+The engine (general BCH/CashTokens) lives in `src/` (`z3.ts`, `model.ts`, `consensus.ts`, `policy.ts`, `covenant.ts`, `script/*`, and the libauth differential oracle in `oracle/*`); the ParyonUSD instantiation lives in `src/covenants/` (the `ids.ts` registry and `common.ts` policy/helpers) and `tests/`. The consensus tally is the trusted base: without a minting input it enforces `minting_out == 0`, `mutable_out <= mutable_in`, and `nft_out <= nft_in` per category. See [docs/scope.md](docs/scope.md) for the per-file map.
 
 The artifact interpreter is split by soundness obligation. `script/interpreter.ts` is the stack machine and must be faithful (a mis-routed value or mis-matched branch would silently constrain the wrong output, which the superset argument does not catch). `script/capability.ts` is the abstraction that decides which comparisons carry a capability, and only needs to be conservative: it drops constraints and never adds them, so it can only widen the transaction set it admits.
+
+## Checked against libauth (the differential oracle)
+
+The model is an idealised VM: values, amounts, arithmetic, signatures, hashes and VM limits are abstracted away. That is sound only if the abstraction never *rejects* a transaction the real VM accepts, and that claim is not something the superset argument can establish by itself. So the faithful half is tested differentially against [libauth](https://github.com/bitauth/libauth), whose BCH VM and CashTokens validation are cross-validated with BCHN on the shared VMB test vectors. Nothing in the oracle depends on CashScript.
+
+`src/oracle/` builds *concrete* transactions (real 32-byte categories, real locking bytecode, real commitments), hands them to libauth as-is, and abstracts the same transaction into the model (`fixTx`). Three tests then hold the two sides against each other:
+
+- `tests/oracle-interpreter.test.ts` — random covenant-shaped scripts (`src/oracle/scriptgen.ts`, with operands routed through a menu of stack-shuffle patterns) are run by libauth's VM and by the symbolic interpreter. Whatever libauth accepts, the model must admit on some path. On the *exact* subset (category identity, positive script-identity and commitment requirements, counts, boolean combinators and branches on those) the verdicts must agree in both directions, which rules out passing the soundness check by admitting everything.
+- `tests/oracle-consensus.test.ts` — random token transactions against libauth's `verifyTransactionTokens`: whatever libauth accepts, the hand-written tally admits; the three modelled rules are shown to reject exactly what libauth rejects. The tally is deliberately weaker (no fungible conservation, no immutable-commitment matching), which is reported, not asserted away.
+- `tests/oracle-decode.test.ts` — the one CashScript-provided step, the ASM decoder, is cross-checked on every ParyonUSD artifact against an independent reading with libauth's opcode table and a libauth encode/decode round-trip.
+
+Every case is reproducible from its seed (`ORACLE_SEED`) and the volume scales with `ORACLE_CASES`. Building the oracle turned a latent abstraction gap into a fix: equalities on *class* identities (every P2PKH is `ATTACKER`, every nulldata is `BURN`, commitment ints identify several byte strings) are only necessary conditions for byte equality, so the interpreter now asserts them only where the script requires them true and never asserts their negation. The exact-mode generator also pins down that a suffix appended to a raw `tokenCategory` field is a category only when that field was bare, which the model decides exactly. See [docs/artifact-derivation.md](docs/artifact-derivation.md).
 
 ## Coverage
 

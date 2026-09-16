@@ -50,6 +50,21 @@ on before touching it:
 When adding modelling, bias toward dropping constraints (safe) over adding them (must be provably
 faithful).
 
+**The faithful half is checked against libauth**, not trusted: `src/oracle/` + `tests/oracle-*.test.ts`
+evaluate random concrete transactions and scripts with libauth's BCH VM / token validation and require
+the model to admit whatever libauth accepts (and to agree both ways on the exact subset). Any change to
+`interpreter.ts`, `capability.ts`, `consensus.ts` or `value.ts` must keep these green; a failure prints
+the seed, the script disassembly and the transaction. `ORACLE_CASES` / `ORACLE_SEED` scale and re-seed
+the fuzzing (e.g. `ORACLE_CASES=1500 ORACLE_SEED=7 pnpm exec vitest run tests/oracle-interpreter.test.ts`);
+stay at or below ~1500 cases per run, since Z3's wasm heap is never reclaimed within a process (3000 hits
+the 2 GB limit) — sweep further with more seeds, not more cases. Separately, z3-solver's wasm worker can
+abort with "corrupted its heap memory" at teardown; it predates the oracle work, is rare, and shows up as
+an unhandled error (occasionally a spurious failure) in `historical-leak.test.ts` — rerun the file. Class
+identities (`ATTACKER`, `BURN`, covenant ids, commitment ints) are only *necessary* conditions for byte
+equality, so their equalities are marked `lossy` and the interpreter asserts them only in positive
+position (never their negation); do not "simplify" that away, and do not encode it with free Z3
+booleans (that blew up Z3's memory on the manage regression build).
+
 ## Engine vs ParyonUSD instantiation
 
 The engine under `src/` is general BCH/CashTokens and imports nothing from `src/covenants/`:
@@ -65,6 +80,8 @@ The engine under `src/` is general BCH/CashTokens and imports nothing from `src/
   (symbolic stack value language), `interpreter.ts` (stack machine), `capability.ts` (capability
   abstraction), `fromArtifact.ts` (loads artifacts, seeds the stack, builds one solver per reachable
   script-path combo).
+- `src/oracle/` — the libauth differential oracle: `concrete.ts` (concrete transactions, libauth
+  bridge, the abstraction `fixTx`), `scriptgen.ts` (random covenant-shaped scripts, exact/wide modes).
 
 ParyonUSD-specific:
 
@@ -93,7 +110,8 @@ Assertion helpers live in `tests/assertions.ts`: `expectArtifactSafe` (≥1 path
 path leak-free — the standard check), `expectArtifactLeaks` (a "composition matters" control: drop a
 partner covenant and show the leak reappears), plus lower-level `expectSat`/`expectNoLeak`/`expectLeak`.
 Coverage is organized by subsystem: `artifact-loan`, `artifact-redemption`, `artifact-pool`,
-`artifact-loankey`, plus `consensus`/`policy`/`historical-leak`/`interpreter-structural` unit tests.
+`artifact-loankey`, plus `consensus`/`policy`/`historical-leak` unit tests and the libauth oracle tests
+`oracle-interpreter`/`oracle-consensus`/`oracle-decode`.
 
 ## Scope boundary (what this tool does NOT check)
 

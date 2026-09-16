@@ -41,6 +41,23 @@ separate concerns, covered by separate tools:
 - the proof's base case + "the live chain runs these artifacts": `verify_contract_deployment`;
 - value-conservation and commitment-integrity as their own properties: not yet built (see README next steps).
 
+## How the abstraction is validated
+
+The model is an idealised VM, and the soundness argument has one direction the superset reasoning
+cannot cover: the real VM must never *accept* a transaction the model rejects. That direction is
+tested differentially against libauth (`tests/oracle-*.test.ts`, engine in `src/oracle/`):
+random concrete transactions and scripts are evaluated by libauth's BCH VM and CashTokens validation
+and abstracted into the model, and whatever libauth accepts the model must admit. On the constructs
+the model claims to capture exactly the verdicts must agree both ways. libauth is the oracle because
+it is cross-validated with BCHN on the shared VMB test vectors; the oracle depends on nothing from
+CashScript, and the CashScript ASM decoder itself is cross-checked against libauth on every artifact.
+
+Known, deliberate imprecisions the oracle reports rather than flags: the tally ignores fungible
+conservation and the immutable-NFT commitment matching (real rejections the model admits — sound, and
+irrelevant to capability movement), and script-identity / commitment equalities are exact only as
+positive requirements (under negation they carry no constraint, by construction: see
+`docs/artifact-derivation.md`).
+
 ## BCH/CashTokens engine vs ParyonUSD-specific
 
 The engine is reusable for any CashScript/CashTokens system; only the registry, policy, and
@@ -60,6 +77,8 @@ transaction templates are ParyonUSD-specific.
 | `src/script/interpreter.ts` | the stack machine — opcode dispatch, stack routing, CAT/SPLIT, branch forking. Obligation: **faithful** (must match the VM exactly; the half the superset argument does *not* protect) |
 | `src/script/capability.ts` | the capability abstraction — which comparisons can move a capability, and their Z3 constraints. Obligation: **conservative** (drops constraints only, so it can only widen the modelled tx set) |
 | `src/script/fromArtifact.ts` | artifact loading + stack seeding; assembles the per-covenant solvers |
+| `src/oracle/concrete.ts` | the differential oracle's concrete side: concrete transactions, the libauth bridge (VM evaluation + token validation), and the abstraction `fixTx` into the model |
+| `src/oracle/scriptgen.ts` | random covenant-shaped script generator (exact / wide modes) for the interpreter-vs-libauth test |
 
 **ParyonUSD-specific (the instantiation):**
 
