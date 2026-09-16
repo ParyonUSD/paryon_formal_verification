@@ -25,7 +25,12 @@ function addStructure(z3: Z3, solver: Z3Solver, slots: Utxo[]): void {
     solver.add(
       z3.If(
         utxo.present,
-        z3.And(utxo.fts.ge(0), z3.Eq(utxo.category.neq(NO_CATEGORY), hasToken)),
+        z3.And(
+          utxo.fts.ge(0),
+          z3.Eq(utxo.category.neq(NO_CATEGORY), hasToken),
+          // A UTXO without an NFT has no commitment: introspection pushes the empty string (int 0).
+          z3.Implies(z3.Not(hasNft), utxo.commitment.eq(0)),
+        ),
         z3.And(
           utxo.category.eq(NO_CATEGORY),
           utxo.fts.eq(0),

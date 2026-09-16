@@ -59,7 +59,7 @@ export interface EqualityResult { e: Bool | null; lossy: boolean }
 export interface CapabilityModel {
   /** A capability-relevant equality (`OP_EQUAL`/`OP_EQUALVERIFY`); see {@link EqualityResult}. */
   equalConstraint(a: SVal, b: SVal): EqualityResult;
-  /** The result of `OP_NUMEQUAL`(`VERIFY`): a count/selector comparison as a bool SVal. */
+  /** The result of `OP_NUMEQUAL`(`VERIFY`): a count/value/amount/selector comparison as a bool SVal. */
   numEqResult(a: SVal, b: SVal): SVal;
   /** The result of a numeric ordering compare (`OP_LESSTHAN` etc.) as a bool SVal. */
   compare(op: number, top: SVal, second: SVal): SVal;
@@ -153,8 +153,23 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     return eqInt(scriptExpr(viewA), scriptExpr(viewB));
   }
 
-  // ---- count / commitment interpretation ----
-  const countExpr = (v: SVal): Num | null => (v.k === 'count' ? (v.of === 'out' ? outCount : inCount) : v.k === 'num' ? v.e : null);
+  // ---- count / value / amount / commitment interpretation ----
+  // Input/output counts, satoshi values and fungible amounts are model Ints; a comparison of one against
+  // a constant or another such field is exact (the VM compares the same numbers). Arithmetic on them
+  // (`OP_ADD` etc.) still yields an opaque number, so derived quantities contribute nothing.
+  const intField = (v: SVal): Num | null => {
+    if (v.k === 'count') return v.of === 'out' ? outCount : inCount;
+    if (v.k === 'num') return v.e;
+    if (v.k !== 'field') return null;
+    switch (v.f) {
+      case 'utxoValue': return tx.inputs[v.i]!.value;
+      case 'outValue': return tx.outputs[v.i]!.value;
+      case 'utxoAmount': return tx.inputs[v.i]!.fts;
+      case 'outAmount': return tx.outputs[v.i]!.fts;
+      default: return null;
+    }
+  };
+  const countExpr = intField;
 
   // NFT commitment as a model Int, for function-NFT identifier branches (e.g. commitment == 0x02).
   const commitExpr = (v: SVal): Num | null =>
@@ -183,8 +198,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     if (ea !== null || eb !== null) {
       let e: Bool | null = null;
       if (ea !== null && eb !== null) e = ea.eq(eb);
-      else if (ea !== null && b.k === 'bytes') e = ea.eq(bytesToNum(b.v));
-      else if (eb !== null && a.k === 'bytes') e = eb.eq(bytesToNum(a.v));
+      else if (ea !== null && b.k === 'bytes' && b.v.length <= 6) e = ea.eq(bytesToNum(b.v));
+      else if (eb !== null && a.k === 'bytes' && a.v.length <= 6) e = eb.eq(bytesToNum(a.v));
       return { k: 'bool', e };
     }
     // Two concrete numbers (e.g. selector vs function index) -> a concrete boolean.
@@ -196,10 +211,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
 
   // Numeric value of an SVal, or null if it isn't a resolvable number.
   function numVal(v: SVal): Num | null {
-    if (v.k === 'count') return v.of === 'out' ? outCount : inCount;
-    if (v.k === 'num') return v.e;
-    if (v.k === 'bytes') return z3.Int.val(bytesToNum(v.v));
-    return null;
+    if (v.k === 'bytes') return v.v.length <= 6 ? z3.Int.val(bytesToNum(v.v)) : null;
+    return intField(v);
   }
 
   function compare(op: number, top: SVal, second: SVal): SVal {

@@ -17,7 +17,9 @@ The model captures exactly what governs capability movement:
   "no minting/mutable created without the matching input" rules);
 - structural presence / contiguity and the category &harr; token consistency of each UTXO;
 - token-category **identity + capability suffix**, locking-script **identity** (covenant / burn /
-  attacker), output **count** caps, and the single-byte function-NFT **commitment** identifiers.
+  attacker), output **count** caps, and the single-byte function-NFT **commitment** identifiers;
+- satoshi **values** and fungible **amounts** where a contract *compares* them (`tokenAmount == 0`,
+  `value == 1000`, `out.value >= in.value`): exact model integers, arithmetic on them stays opaque.
 
 ## What is NOT checked (and why that's sound)
 
@@ -25,6 +27,8 @@ These are out of scope and the model asserts nothing about them:
 
 - **BCH value conservation and miner fees** (the satoshi balance of inputs vs outputs).
 - **Fungible-token amount conservation** (PUSD debt, collateral, staked balances, interest/fee math).
+  Amounts and values appear in the model only where a contract compares them directly; sums and
+  arithmetic results are opaque.
 - **Standardness, including the dust threshold.** Dust is *not* a flat 540/546 sats: a standard node
   requires an output's value to be at least `444 + 3 * outputSize` sats, so token-bearing outputs need
   more than a pre-token P2PKH did. ~1000 sats is the practical default for P2PKH/P2SH outputs and

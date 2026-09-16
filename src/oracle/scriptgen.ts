@@ -14,8 +14,8 @@ import { minimalCommitment, p2pkh, p2sh32, nulldata, type ConcreteTx, type Rng, 
  * Two modes:
  *  - `exact`: only constructs the capability model claims to capture *exactly* — token-category
  *    identity, locking-bytecode identity against canonical constants/fields/seeds, minimally-encoded
- *    commitments, input/output counts, boolean combinators and branches on those. Here the model
- *    must agree with libauth in both directions.
+ *    commitments, input/output counts, satoshi values and token amounts in comparisons, boolean
+ *    combinators and branches on those. Here the model must agree with libauth in both directions.
  *  - wide (`exact: false`): additionally everything the model abstracts (values, amounts, arithmetic,
  *    hashes, sigs, non-minimal encodings, out-of-range indices, mismatched-kind compares, ...).
  *    Here only soundness is asserted: whatever libauth accepts, the model must admit.
@@ -169,7 +169,14 @@ export function generateScript(cfg: GenConfig): Generated {
       return false;
     }
     if (wide(0.3)) { opaqueNum(); return false; }
-    emit(rng.bool() ? Op.OP_TXOUTPUTCOUNT : Op.OP_TXINPUTCOUNT, 1);
+    // Counts, satoshi values and fungible amounts are all model Ints (exact in comparisons).
+    switch (rng.int(5)) {
+      case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); break;
+      case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); break;
+      case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); break;
+      case 3: pushNum(outIdx()); emit(Op.OP_OUTPUTTOKENAMOUNT, 0); break;
+      default: emit(rng.bool() ? Op.OP_TXOUTPUTCOUNT : Op.OP_TXINPUTCOUNT, 1); break;
+    }
     return true;
   };
 
@@ -177,10 +184,10 @@ export function generateScript(cfg: GenConfig): Generated {
   const opaqueNum = (): void => {
     const r = rng.int(8);
     switch (r) {
-      case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); break;
-      case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); break;
-      case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); break;
-      case 3: pushNum(outIdx()); emit(Op.OP_OUTPUTTOKENAMOUNT, 0); break;
+      case 0: pushNum(inIdx()); emit(Op.OP_UTXOVALUE, 0); pushNum(1 + rng.int(9)); emit(Op.OP_ADD, -1); break;
+      case 1: pushNum(outIdx()); emit(Op.OP_OUTPUTVALUE, 0); emit(Op.OP_BIN2NUM, 0); break;
+      case 2: pushNum(inIdx()); emit(Op.OP_UTXOTOKENAMOUNT, 0); pushNum(2); emit(Op.OP_MUL, -1); break;
+      case 3: pushNum(outIdx()); emit(Op.OP_OUTPUTTOKENAMOUNT, 0); emit(Op.OP_SIZE, 1); emit(Op.OP_NIP); break;
       case 4: emit(rng.bool() ? Op.OP_TXLOCKTIME : Op.OP_TXVERSION, 1); break;
       case 5:
         pushNum(rng.int(50)); pushNum(1 + rng.int(9));
