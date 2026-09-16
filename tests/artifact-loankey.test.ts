@@ -58,6 +58,20 @@ describe('borrowing + loanKey factory — derived from artifact bytecode', () =>
     await expectArtifactLeaks(z3, borrow(z3, false));
   });
 
+  // --- updatePeriodState: Borrowing (abi 1) alone, the minting NFT with only a fee input ---
+  it('Borrowing.updatePeriodState (output cap protects the minting NFT)', async () => {
+    await expectArtifactSafe(z3, buildFromArtifact(z3, [{
+      artifact: paryonArtifacts.artifactBorrowing, activeIndex: 0, abiIndex: 1,
+      seeds: [seedScript(SCRIPT.LOAN), seedScript(SCRIPT.LOAN_SIDECAR), seedScript(SCRIPT.FEE), seedScript(SCRIPT.ORIGIN_ENFORCER), seedOpaque, seedOpaque],
+    }], {
+      nInputs: 2, nOutputs: 4, categories: LOAN_CATEGORIES, policy: POLICY.borrow, designatedInputs: [0],
+      setup: (_z3, s, tx) => {
+        pin(s, tx.inputs[0]!, { category: CAT.PARYON, capability: Capability.MINTING, script: SCRIPT.BORROWING });
+        pin(s, tx.inputs[1]!, { category: NO_CATEGORY }); // fee BCH
+      },
+    }));
+  });
+
   it('LoanKeyFactory.create (genesis-mints a loanKey)', async () => {
     await expectArtifactSafe(z3, buildFromArtifact(z3, [
       // constructor: loanKeyOriginEnforcerLockingScript, loanKeyOriginProofLockingScript

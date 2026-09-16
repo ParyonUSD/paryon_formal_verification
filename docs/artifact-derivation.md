@@ -86,9 +86,9 @@ the loan/price/pool/etc.), plus the leak policy.
 - **Stability-pool subsystem** (`tests/artifact-pool.test.ts`): `AddLiquidity`, `WithdrawFromPool`,
   `NewPeriodPool`, `LiquidateLoan`, `Payout.claimPayout`, `Collector` (multi-function),
   `StabilityPool.interact`, and `StabilityPoolSidecar.attach` — all derived.
-- **Borrowing + loanKey factory** (`tests/artifact-loankey.test.ts`): `Borrowing.borrow`
-  (multi-function, paryon minting authority), `LoanKeyFactory.create` (genesis-mints a per-loan
-  loanKey), and `PriceContract.sharePrice` — all derived.
+- **Borrowing + loanKey factory** (`tests/artifact-loankey.test.ts`): `Borrowing.borrow` and
+  `Borrowing.updatePeriodState` (multi-function, paryon minting authority), `LoanKeyFactory.create`
+  (genesis-mints a per-loan loanKey), and `PriceContract.sharePrice` — all derived.
 
 Two covenants are intentionally omitted because they pin no outputs (auth/adjacency only, no
 capability effect): `RedemptionSidecar.attach`, `LoanKeyOriginEnforcer.enforce` /

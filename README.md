@@ -57,8 +57,10 @@ Every contract's covenant output pins are derived from the compiled `@paryonusd/
 | Loan functions | changeInterest, manage, payInterest | `tests/artifact-loan.test.ts` |
 | Redemption | startRedemption, finalize (redeem), swap | `tests/artifact-redemption.test.ts` |
 | Stability pool | addLiquidity, withdraw, newPeriod, liquidate, payout | `tests/artifact-pool.test.ts` |
-| Borrowing + loanKey | borrow, loanKey-factory create | `tests/artifact-loankey.test.ts` |
+| Borrowing + loanKey | borrow, updatePeriodState, loanKey-factory create | `tests/artifact-loankey.test.ts` |
 
 Each transaction is checked for non-vacuity (a valid tx is `sat`) and leak-freedom (consensus + covenants + leak is `unsat`). Several carry a `composition matters` test that drops a delegated partner covenant and shows the leak reappear, proving the cross-contract protection is load-bearing.
+
+Two real, independently discovered historical capability leaks serve as end-to-end sanity checks (`tests/historical-leak.test.ts`): the pre-fix contracts, compiled with the cashc of their era, produce a satisfiable leak witness, and the fixed ones do not. They are `manage` closing a loan without burning its mutable NFT (fixed 2026-04) and `Borrowing.updatePeriodState` checking the wrong change-output index next to the paryon minting NFT (fixed 2025-11, paryon_contracts `3e9cf60`).
 
 No covenant is hand-modelled; every contract (including the recreation/sidecar partners `PriceContract.sharePrice`, `StabilityPool.interact`, `LoanTokenSidecar`, `StabilityPoolSidecar`) has its constraints derived from bytecode. The only hand-written part of each test is the input `setup` (the transaction shape) and the leak policy. See [docs/artifact-derivation.md](docs/artifact-derivation.md) for the pipeline, the subtleties the bytecode forced us to get right, and the modelling assumptions worth reviewing.
