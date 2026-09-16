@@ -209,6 +209,46 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     v.k === 'field' && v.f === 'utxoCommit' ? tx.inputs[v.i]! : v.k === 'field' && v.f === 'outCommit' ? tx.outputs[v.i]! : null;
   const commitExpr = (v: SVal): Num | null => commitSlot(v)?.commitment ?? null;
 
+  // ---- the leading identifier byte ----
+  // Every covenant tells one kind of state NFT from another by its first byte:
+  // `nftCommitment.split(1)[0] == 0x00` is the price contract, `0x01` a loan, `0x04` the
+  // startRedemption function NFT. The int reading cannot supply it (it reads the whole string), so the
+  // model carries the byte itself and this view finds it in a stack value. `guard` is what the VM
+  // requires for the split that took the byte to succeed at all — splitting an empty commitment at 1
+  // is an error, so the equality must be false there. `fromSlot` marks a value that came from a
+  // commitment field, which is what makes the comparison worth a constraint at all.
+  type HeadView = { head: Num | number; guard: Bool | null; fromSlot: boolean };
+  const bothGuards = (x: Bool | null, y: Bool | null): Bool | null =>
+    x === null ? y : y === null ? x : z3.And(x, y);
+  function headView(v: SVal): HeadView | null {
+    const slot = commitSlot(v);
+    if (slot) return { head: slot.commitmentHead, guard: null, fromSlot: true };
+    if (v.k === 'bytes') return v.v.length > 0 ? { head: v.v[0]!, guard: null, fromSlot: false } : null;
+    // A left split keeps the front of the string, so it keeps its first byte — provided the string was
+    // long enough for the split in the first place.
+    if (v.k === 'split' && v.side === 'L' && v.at >= 1) {
+      const inner = headView(v.v);
+      if (!inner) return null;
+      const len = lengthOf(v.v);
+      // A statically known length is a fact about the value, not a constraint to emit; a symbolic one
+      // (a commitment field) becomes the guard. Over-splitting a too-short constant stays admitted.
+      const guard = len !== null && typeof len !== 'number' ? len.ge(v.at) : null;
+      return { head: inner.head, guard: bothGuards(inner.guard, guard), fromSlot: inner.fromSlot };
+    }
+    if (v.k === 'cat') {
+      for (const part of v.parts) {
+        if (lengthOf(part) === 0) continue; // a statically empty part contributes nothing
+        return headView(part); // the first possibly-non-empty part carries the first byte
+      }
+    }
+    return null;
+  }
+  const headEquality = (x: HeadView, y: HeadView): Bool => {
+    const guard = bothGuards(x.guard, y.guard);
+    const eq = eqInt(x.head, y.head);
+    return guard === null ? eq : z3.And(guard, eq);
+  };
+
   // ---- byte lengths ----
   // Exact where the structure is known: constants, sized opaques (NUM2BIN, hashes), commitment fields,
   // tokenCategory fields (0 / 32 / 33 by class), seeds, outpoint hashes, and CAT/SPLIT of those.
@@ -296,6 +336,8 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       const parts: Bool[] = [];
       const ia = commitIntOf(a), ib = commitIntOf(b);
       if (ia !== null && ib !== null) parts.push(eqInt(ia, ib));
+      const heads = [headView(a), headView(b)];
+      if (heads[0] && heads[1]) parts.push(headEquality(heads[0], heads[1]));
       const la = lengthOf(a), lb = lengthOf(b);
       if (la !== null && lb !== null) parts.push(eqInt(la, lb));
       else if (la !== null || lb !== null) {
@@ -308,6 +350,10 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
       }
       return parts.length > 0 ? lossy(z3.And(...parts)) : NONE;
     }
+    // `commitment.split(1)[0] == 0x01`: neither side is a whole commitment field, but both have a
+    // known first byte. Necessary for byte equality, never asserted under negation (lossy).
+    const headA = headView(a), headB = headView(b);
+    if (headA && headB && (headA.fromSlot || headB.fromSlot)) return lossy(headEquality(headA, headB));
     return NONE; // value / amount / opaque -> no capability content
   }
 

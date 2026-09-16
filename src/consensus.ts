@@ -22,6 +22,14 @@ function addStructure(z3: Z3, out: Bool[], slots: Utxo[]): void {
     out.push(utxo.category.ge(0), utxo.category.le(MAX_CATEGORY));
     out.push(utxo.script.ge(0), utxo.script.le(MAX_SCRIPT));
     out.push(utxo.commitmentLength.ge(0), utxo.commitmentLength.le(MAX_COMMITMENT_LENGTH));
+    out.push(utxo.commitmentHead.ge(0), utxo.commitmentHead.le(0xff));
+    // An empty commitment has no first byte and reads as the integer 0; a one-byte commitment's int
+    // reading IS its byte, sign-magnitude (0x81 reads as -1, 0x80 as 0).
+    out.push(z3.Implies(utxo.commitmentLength.eq(0), z3.And(utxo.commitment.eq(0), utxo.commitmentHead.eq(0))));
+    out.push(z3.Implies(
+      utxo.commitmentLength.eq(1),
+      utxo.commitment.eq(z3.If(utxo.commitmentHead.ge(0x80), utxo.commitmentHead.neg().add(0x80), utxo.commitmentHead)),
+    ));
 
     const hasNft = utxo.capability.ge(Capability.IMMUTABLE);
     const hasToken = z3.Or(hasNft, utxo.fts.gt(0));
