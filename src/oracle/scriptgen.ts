@@ -194,7 +194,25 @@ export function generateScript(cfg: GenConfig): Generated {
     pushData(Uint8Array.of(3 + rng.int(200))); // the suffix of no tokenCategory: always false
   };
 
+  /**
+   * A commitment field with something appended — `nftCommitment + 0x05`, the shape every state update
+   * in the contracts builds. The model keeps only an int reading, a length and a first byte, so the
+   * comparison is a *necessary* condition rather than an exact one and this construct belongs to the
+   * wide (soundness-only) subset: what it checks is that the model never rejects what the VM accepts,
+   * which is exactly how an over-eager first byte would show up (the field may be empty at run time,
+   * and then the first byte is the appended constant's).
+   */
+  const commitConcatOperand = (): void => {
+    const side = rng.bool() ? 'in' : 'out';
+    pushNum(side === 'in' ? inIdx() : outIdx());
+    emit(side === 'in' ? Op.OP_UTXOTOKENCOMMITMENT : Op.OP_OUTPUTTOKENCOMMITMENT, 0);
+    pushData(minimalCommitment(rng));
+    emit(Op.OP_CAT, -1);
+    if (rng.bool(0.3)) { pushNum(1); emit(Op.OP_SPLIT, 0); emit(Op.OP_DROP); } // ...and its first byte
+  };
+
   const commitOperand = (forceField = false): void => {
+    if (!forceField && wide(0.25)) { commitConcatOperand(); return; }
     if (!forceField && rng.bool(0.4)) {
       if (wide(0.3)) { // opaque content of a known length
         pushNum(rng.int(300)); pushNum(1 + rng.int(4)); emit(Op.OP_NUM2BIN, -1);

@@ -237,8 +237,13 @@ export function makeCapabilityModel(z3: Z3, tx: SymbolicTx, activeIndex: number)
     }
     if (v.k === 'cat') {
       for (const part of v.parts) {
-        if (lengthOf(part) === 0) continue; // a statically empty part contributes nothing
-        return headView(part); // the first possibly-non-empty part carries the first byte
+        const len = lengthOf(part);
+        if (len === 0) continue; // a statically empty part contributes nothing
+        // Only a part whose length is *statically* at least one is known to carry the first byte. A
+        // commitment field has a symbolic length and may be empty at run time, in which case the first
+        // byte comes from whatever follows it — so `in.commitment + 0x05` has no known head, and
+        // claiming `in.commitment`'s head would reject a transaction the VM accepts.
+        return typeof len === 'number' && len >= 1 ? headView(part) : null;
       }
     }
     return null;
