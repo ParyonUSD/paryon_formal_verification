@@ -91,7 +91,7 @@ The three ParyonUSD verification tools cover different axes, all against the sam
 - this repo — exhaustive proof of the capability-leak invariant over all consensus-valid transactions within the bound.
 - `verify_contract_deployment` — the live chain runs these artifacts, from a genesis state satisfying the invariant.
 
-See [docs/scope.md](docs/scope.md) for the full breakdown of what is and is not checked, and which code is general BCH/CashTokens machinery versus ParyonUSD-specific.
+See [docs/scope.md](docs/scope.md) for the full breakdown of what is and is not checked, and which code is general BCH/CashTokens machinery versus ParyonUSD-specific. What is still worth proving or improving, and where a proof assistant would and would not help, is in [docs/future-work.md](docs/future-work.md).
 
 ## Layout
 
