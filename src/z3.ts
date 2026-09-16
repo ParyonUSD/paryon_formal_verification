@@ -70,15 +70,65 @@ export function newSolver(z3: Z3): Z3Solver {
  * directory per process).
  */
 export async function checkNative(solver: Z3Solver, label: string): Promise<'sat' | 'unsat' | 'unknown'> {
-  const dir = process.env['Z3_SMT_DIR'] ?? join(tmpdir(), 'paryon-fv', String(process.pid));
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${++queryCounter}-${label.replace(/[^A-Za-z0-9_.-]+/g, '_')}.smt2`);
-  writeFileSync(file, `(set-logic QF_LIA)\n${solver.toString()}\n(check-sat)\n`);
+  const file = writeQuery(solver, label, '(check-sat)\n');
   const { stdout, stderr } = await execFileAsync(z3Binary(), ['-smt2', file], { timeout: NATIVE_TIMEOUT_MS, maxBuffer: 1 << 20 });
   const verdict = stdout.trim().split('\n').pop();
   if (verdict === 'sat' || verdict === 'unsat' || verdict === 'unknown') return verdict;
   throw new Error(`z3 gave no verdict for ${file}: ${stdout} ${stderr}`);
 }
+/**
+ * Decide a solver's assertions natively *and*, when satisfiable, bring back the assignment.
+ *
+ * A counterexample is only useful if it can be read: this returns the model as a flat
+ * `constant name -> value` map (`Int` as a decimal string, `Bool` as `true`/`false`), which the
+ * caller turns back into UTXO fields by name. Same isolation as {@link checkNative}.
+ */
+export async function modelNative(
+  solver: Z3Solver, label: string,
+): Promise<{ verdict: 'unsat' | 'unknown' } | { verdict: 'sat'; model: Map<string, string> }> {
+  const file = writeQuery(solver, label, '(check-sat)\n(get-model)\n');
+  // z3 exits non-zero on the `(get-model)` that follows an unsat `(check-sat)` ("model is not
+  // available"), so the verdict is read from stdout either way.
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(z3Binary(), ['-smt2', file], { timeout: NATIVE_TIMEOUT_MS, maxBuffer: 1 << 26 }));
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException & { stdout?: string };
+    if (err.code === 'ENOENT' || typeof err.stdout !== 'string') throw e;
+    stdout = err.stdout;
+  }
+  const verdict = stdout.trimStart().split(/\s/, 1)[0];
+  if (verdict !== 'sat') return { verdict: verdict === 'unknown' ? 'unknown' : 'unsat' };
+  return { verdict: 'sat', model: parseModel(stdout) };
+}
+
+/** Parse z3's `(define-fun name () Sort value)` model output into a name -> value map. */
+function parseModel(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /\(define-fun\s+([^\s()]+)\s*\(\s*\)\s*(?:Int|Bool)\s+/g;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    let at = re.lastIndex, depth = 0;
+    while (at < text.length) {
+      const ch = text[at]!;
+      if (ch === '(') depth++;
+      else if (ch === ')') { if (depth === 0) break; depth--; }
+      at++;
+    }
+    const raw = text.slice(re.lastIndex, at).trim();
+    // Negative integers come back as `(- 5)`.
+    out.set(m[1]!, /^\(\s*-\s*\d+\s*\)$/.test(raw) ? `-${raw.replace(/[^\d]/g, '')}` : raw);
+  }
+  return out;
+}
+
+function writeQuery(solver: Z3Solver, label: string, tail: string): string {
+  const dir = process.env['Z3_SMT_DIR'] ?? join(tmpdir(), 'paryon-fv', String(process.pid));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${++queryCounter}-${label.replace(/[^A-Za-z0-9_.-]+/g, '_')}.smt2`);
+  writeFileSync(file, `(set-logic QF_LIA)\n${solver.toString()}\n${tail}`);
+  return file;
+}
+
 const execFileAsync = promisify(execFile);
 let queryCounter = 0;
 /** Generous: a native query here takes milliseconds; anything longer is a bug to see, not to hide. */

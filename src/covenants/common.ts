@@ -112,6 +112,31 @@ export const POLICY = {
   loanKeyFactory: loanPolicy([OWN.loanKeyFactoryMinting]),
 } satisfies Record<string, LeakPolicy>;
 
+/**
+ * The system-wide leak policy: the union of every per-template ownership rule, i.e. the real
+ * deployment fact about where each privileged capability lives, with no transaction shape attached.
+ *
+ * A template's policy lists only the owners that template's transaction involves, which doubles as a
+ * statement that the other privileged pairs cannot appear on its inputs. The whole-system model has no
+ * transaction shape to scope, so it states the invariant once, for every capability at once: this is
+ * the strongest form of the obligation (an output on *any* covenant that does not own its capability
+ * is a leak) and the weakest form of the hypothesis (an input may carry any capability its real owner
+ * holds), which is what lets one build cover every operation, batched or not.
+ */
+export const SYSTEM_POLICY: LeakPolicy = {
+  internalAuthorityCategories: INTERNAL_CATEGORIES,
+  ownership: [
+    OWN.paryonMutableLoanPrice,
+    OWN.paryonMintingBorrowing,
+    OWN.poolMintingFull,
+    OWN.poolMutableCollector,
+    OWN.redeemerMinting,
+    OWN.redeemerMutable,
+    OWN.loanKeyFactoryMinting,
+  ],
+  functionNfts: FUNCTION_NFTS,
+};
+
 export interface UtxoSpec {
   script?: number;
   category?: number;
