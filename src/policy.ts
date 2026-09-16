@@ -100,13 +100,24 @@ export function privilegedInputsOnlyAt(z3: Z3, tx: SymbolicTx, policy: LeakPolic
 }
 
 /**
- * The leak witness: satisfiable exactly when some output leaks a privileged
- * capability to an attacker-controlled script. Assert it alongside the
- * consensus + covenant constraints and expect UNSAT; a SAT result is a concrete
- * counterexample transaction.
+ * The leak witness: satisfiable exactly when some output carries a privileged capability that is
+ * neither burned (an OP_RETURN output is never spent again) nor held by a covenant that rightfully
+ * owns it. Assert it alongside the consensus + covenant constraints and expect UNSAT; a SAT result is
+ * a concrete counterexample transaction.
+ *
+ * This is *invariant preservation*, not merely "no attacker output": the induction assumes
+ * `inputsRespectInvariant` on the inputs, so the outputs must be shown to satisfy the same
+ * ownership invariant. A privileged NFT parked on the wrong covenant is not spendable by the attacker
+ * today, but the wrong covenant's code does not protect it, and no template analyses that spend —
+ * which is why it counts as a leak here. The per-template `ownership` list is therefore the reviewed
+ * specification of where each capability may legitimately end up.
  */
 export function leakWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
   return any(z3, tx.outputs.map((utxo) =>
-    z3.And(isInternalPrivileged(z3, utxo, policy), utxo.script.eq(Script.ATTACKER)),
+    z3.And(
+      isInternalPrivileged(z3, utxo, policy),
+      z3.Not(utxo.script.eq(Script.BURN)),
+      z3.Not(ownedByCovenant(z3, utxo, policy)),
+    ),
   ));
 }

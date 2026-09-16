@@ -57,6 +57,15 @@ describe('capability-leak policy', () => {
     expect(await s.check()).toBe('sat');
   });
 
+  it('moving the loan NFT to a covenant that does not own it breaks the invariant (sat)', async () => {
+    const { s, tx } = setup(z3, 3);
+    // Recreated faithfully, but on another system covenant: not an attacker output, yet the next
+    // transaction's inductive hypothesis would be false, so the witness must fire.
+    s.add(tx.outputs[0]!.present, tx.outputs[0]!.category.eq(PARYON), tx.outputs[0]!.capability.eq(Capability.MUTABLE), tx.outputs[0]!.script.eq(LOAN_SCRIPT + 1));
+    s.add(leakWitness(z3, tx, policy));
+    expect(await s.check()).toBe('sat');
+  });
+
   it('burning the loan NFT to OP_RETURN is also leak-free (unsat)', async () => {
     const { s, tx } = setup(z3, 3);
     // Send the mutable NFT to a provably-unspendable burn instead of recreating.

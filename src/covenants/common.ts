@@ -79,12 +79,13 @@ export const POLICY = {
   payInterest: loanPolicy([OWN.paryonMutableLoanPrice, OWN.poolMutableCollector]),
   redeem: loanPolicy([OWN.paryonMutableLoan, OWN.redeemerMutable]),
   swap: loanPolicy([OWN.paryonMutableLoan, OWN.redeemerMutable]),
-  startRedemption: loanPolicy([OWN.paryonMutableLoanPrice, OWN.redeemerMinting]),
+  // creates a Redemption (redeemer-mutable), so that owner is listed too
+  startRedemption: loanPolicy([OWN.paryonMutableLoanPrice, OWN.redeemerMinting, OWN.redeemerMutable]),
   liquidate: loanPolicy([OWN.paryonMutableLoanPrice, OWN.poolMinting]),
   // stability-pool functions
   addLiquidity: loanPolicy([OWN.poolMinting]),
   withdraw: loanPolicy([OWN.poolMinting]),
-  newPeriod: loanPolicy([OWN.poolMinting, OWN.poolMutableCollector]),
+  newPeriod: loanPolicy([OWN.poolMintingFull, OWN.poolMutableCollector]), // creates a Payout
   payout: loanPolicy([OWN.poolMintingFull]),
   // borrowing + loanKey factory
   borrow: loanPolicy([OWN.paryonMintingBorrowing, OWN.paryonMutableLoanPrice]),

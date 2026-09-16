@@ -100,8 +100,10 @@ capability effect): `RedemptionSidecar.attach`, `LoanKeyOriginEnforcer.enforce` 
   BCH values, fungible amounts and nftCommitment contents are omitted — none can move an NFT
   capability, and dropping them yields a sound *superset* of transactions (and keeps Z3 fast).
 - **Ownership map** (`LeakPolicy.ownership`): each template states which covenant rightfully
-  holds each privileged `(category, capability)` — this is the inductive hypothesis and a
-  reviewable claim.
+  holds each privileged `(category, capability)`. It is both the inductive hypothesis on inputs and
+  the obligation on outputs (the leak witness fires on any privileged output that is neither burned
+  nor on a listed owner), so it must list every covenant a template legitimately *creates* too —
+  `startRedemption` creating a Redemption, `NewPeriodPool` creating a Payout. A reviewable claim.
 - **Designated privileged inputs** (`privilegedInputsOnlyAt`): each check fixes which input indices
   carry a privileged capability, because on-chain a privileged UTXO can only be spent by running its
   governing covenant. Batching several governed UTXOs into one tx is a distinct (larger) template —

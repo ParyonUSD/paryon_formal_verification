@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `paryon_formal_verification` (formerly `z3-solver-ts`) is a bounded model checker that proves the
 ParyonUSD CashScript contracts cannot **leak an NFT capability** — i.e. no consensus-valid transaction
 allowed by the covenants can place a mutable/minting capability of an internal-authority category on an
-attacker-controlled output. It uses Z3 (via `z3-solver` wasm bindings) and symbolically executes the
+output other than an owning covenant or a burn (invariant preservation, so the induction closes). It uses Z3 (via `z3-solver` wasm bindings) and symbolically executes the
 compiled `@paryonusd/contracts` artifact bytecode.
 
 The proof lifts a single transaction to the full covenant lifetime by induction (see

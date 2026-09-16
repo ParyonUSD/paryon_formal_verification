@@ -6,9 +6,9 @@ It uses the real CashScript artifacts and resolves instantiated locking bytecode
 
 ## The property
 
-For every internal-authority category (the five ParyonUSD deploy categories), no transaction allowed by CashTokens consensus and the system's covenants can place that category's mutable or minting capability on an output controlled by anyone but a system covenant (or a provable burn).
+For every internal-authority category (the five ParyonUSD deploy categories), no transaction allowed by CashTokens consensus and the system's covenants can place that category's mutable or minting capability on an output other than a covenant that rightfully owns it, or a provable burn.
 
-We check it per transaction template: assert `consensus ∧ covenants ∧ leak` and expect `unsat`. A `sat` result is a concrete counterexample transaction. The single-transaction result lifts to "the attacker can never come to hold such a capability" by induction over the covenant lifetime (deploy state is the base case).
+We check it per transaction template: assert `consensus ∧ covenants ∧ leak` and expect `unsat`. A `sat` result is a concrete counterexample transaction. The witness is invariant preservation, not merely "no attacker output": the inputs are assumed to satisfy the ownership invariant (every privileged NFT sits on its owning covenant), so the outputs are required to satisfy the same invariant, which is what lets the single-transaction result lift to "the attacker can never come to hold such a capability" by induction over the covenant lifetime (deploy state is the base case). A privileged NFT parked on the wrong covenant would count as a leak: that covenant's code does not protect it. The per-template ownership list is therefore a reviewed specification of where each capability may legitimately go.
 
 ## Trust chain
 

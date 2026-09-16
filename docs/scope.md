@@ -5,10 +5,11 @@ machinery versus ParyonUSD-specific.
 
 ## What is checked
 
-One property: **NFT-capability non-leak**. For the internal-authority categories, no transaction
-allowed by the CashTokens token-validation rules and the system's covenants can place a *mutable or
-minting* capability of those categories on an output controlled by anyone but a system covenant (or a
-provable burn). See the README for the formal statement and the inductive framing.
+One property: **NFT-capability non-leak**, checked as ownership-invariant preservation. For the
+internal-authority categories, no transaction allowed by the CashTokens token-validation rules and the
+system's covenants can place a *mutable or minting* capability of those categories on an output other
+than a covenant that rightfully owns it (per the template's ownership list) or a provable burn. See the
+README for the formal statement and the inductive framing.
 
 The model captures exactly what governs capability movement:
 
