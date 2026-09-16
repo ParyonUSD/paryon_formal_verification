@@ -137,6 +137,8 @@ immutable NFT with a non-empty commitment is a function NFT" is true and is what
 
 ## Next steps
 
-- Lift the 9-input / 11-output bound, or argue it away: the five capacity-cut sites are the only place
-  the bound, rather than a contract, decides anything.
+- Widen the 9-input / 11-output bound. Nothing inside it is unsound — a path pruned for reading input 9
+  is infeasible on every transaction with at most 9 inputs — but a loan operation takes four or five
+  inputs, so nearly every two-operation batch needs more than nine and batched shapes are thinly
+  covered in practice. The capacity is the only parameter that has to change.
 - Layer in value-conservation and commitment-integrity as separate properties.

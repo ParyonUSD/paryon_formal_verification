@@ -103,13 +103,12 @@ describe('whole-system proof', () => {
   });
 
   it('the capacity cuts exactly the sites it is known to cut', () => {
-    // Where the *bound*, not a contract, pruned a path: the build then concludes that covenant cannot
-    // sit at that index, which is a hole unless the shape is genuinely outside the bound. All five are.
+    // Where the *capacity*, not a contract, pruned a path. Each is faithful within the bound — no
+    // transaction with 9 inputs has an input 9, so the covenant really cannot run there —
     // `Loan.interact` and `StabilityPool.interact` read their function NFT at `activeInputIndex + 2`
-    // and `StabilityPoolSidecar.attach` reads it at `activeInputIndex + 1`, so a loan or pool that late
-    // needs a 10th input, more than this build carries. Every operation places the loan at input 0, 1
-    // or 6 and the pool at 0 or 4, so none is lost; a loan or pool that late in a longer input list is
-    // outside the proof. A cut anywhere else fails here.
+    // and `StabilityPoolSidecar.attach` at `activeInputIndex + 1`, so a loan or pool that late would
+    // need a 10th input. The list is a regression guard: a cut appearing anywhere else means the
+    // capacity has begun deciding something new, and fails here.
     expect(built.cutSites.map((site) => `${site.name}@${site.index} (${site.reads.join(',')})`)).toEqual([
       'Loan.interact@7 (in9)',
       'Loan.interact@8 (in9)',

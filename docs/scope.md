@@ -61,15 +61,19 @@ separate concerns, covered by separate tools:
 ## The bound
 
 The proof is a *bounded* one: transactions with at most 9 inputs and 11 outputs. Within that bound the
-solver is free, so batched and multi-operation transactions are covered. Outside it nothing is claimed.
+solver is free — it may batch several operations into one transaction, and nothing in the model
+discourages it. Outside the bound nothing is claimed, and that is the single limitation, uniform across
+the whole property: larger transactions are unexamined, not mis-examined.
 
-The bound has one sharp edge, and the builder surfaces it rather than hiding it. When a covenant reads
-a UTXO index the build does not carry, the path is pruned and `script == S ⇒ OR(paths)` collapses to
-`script == S ⇒ false` at that index: the build concludes that covenant cannot sit there. `cutSites`
-returns every such site and `tests/whole-system.test.ts` enumerates the accepted set with the argument
-for why those shapes are outside the bound anyway (`Loan.interact` and `StabilityPool.interact` read
-their function NFT two inputs on, so a loan or pool at input 7 or 8 needs a tenth input). A cut
-anywhere else fails the suite.
+Because a loan operation alone occupies four or five inputs, nearly every two-operation batch needs
+more than nine, so in practice the coverage of *batched* transactions is thin. Widening the capacity is
+the way to deepen it; the model needs no other change.
+
+Inside the bound, a path pruned because the covenant read a UTXO index the build does not carry is
+faithful, not a gap: no transaction with at most 9 inputs has an input 9, so the covenant genuinely
+cannot run at that index and `script == S ⇒ false` there is the correct answer. `cutSites` still
+returns every such site and `tests/whole-system.test.ts` enumerates them as a regression guard — a cut
+appearing anywhere else means the capacity has begun deciding something new, and fails the suite.
 
 ## How the abstraction is validated
 
@@ -124,7 +128,7 @@ category/script id assignment are ParyonUSD-specific.
 | `src/covenants/common.ts` | the identifiers the contracts authenticate by, and `SYSTEM_POLICY` — the invariant |
 | `tests/whole-system*.test.ts` | the proof, the historical regressions and the composition control |
 
-The category set the tally ranges over is passed in via the build config (`LOAN_CATEGORIES` from
+The category set the tally ranges over is passed in via the build config (`TALLIED_CATEGORIES` from
 `common.ts`), so the engine itself imports nothing from `src/covenants`. Identities are modelled as
 small ints because the property only needs equality; the real 32-byte tokenIds and ~35-byte P2SH32
 scripts are checked on chain by `verify_contract_deployment`.

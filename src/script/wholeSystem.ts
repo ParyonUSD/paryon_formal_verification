@@ -81,10 +81,11 @@ export interface WholeSystemStats {
  * A (covenant, function, index) site where the *capacity*, not the contract, pruned a path: the
  * function read a UTXO index the build does not carry.
  *
- * This is a hole in the proof by construction — `script == S => OR(paths)` collapses to
- * `script == S => false` at that index, so the build concludes that covenant cannot sit there — and
- * whether that is acceptable depends on an argument about the bound, not on anything the model can
- * check. So every one is surfaced and the tests enumerate the set they accept.
+ * Within the bound this is faithful, not a gap: no transaction with at most `nInputs` inputs has an
+ * input at that index, so the covenant genuinely cannot run there and `script == S => false` is the
+ * right answer. What it does mark is where the *capacity* decided something rather than a contract, so
+ * every one is surfaced and the tests enumerate the set they accept — a cut appearing anywhere else
+ * means the capacity has begun deciding something new.
  */
 export interface CutSite {
   script: number;

@@ -48,10 +48,10 @@ export interface InterpretStats {
    * that made it.
    *
    * Within the bounded model — transactions with at most `nInputs` inputs and `nOutputs` outputs — no
-   * such field exists, so dropping the path is faithful *for that bound*. But a dropped path turns
-   * `script == S => OR(paths)` into `script == S => false` at that index, which is a hole in the proof
-   * by construction, so this is not a diagnostic: a builder must surface every entry and a test must
-   * enumerate the ones it accepts, with the argument for why that shape is outside the bound.
+   * such field exists, so dropping the path is faithful for that bound. It is recorded anyway because
+   * it marks where the *capacity*, rather than a contract, decided that a covenant cannot run at an
+   * index: a builder surfaces every entry and a test enumerates the ones it accepts, so a new one
+   * cannot appear unnoticed.
    */
   beyondCapacity?: { side: 'in' | 'out'; index: number }[];
 }

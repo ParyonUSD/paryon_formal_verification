@@ -67,9 +67,13 @@ Two real, independently discovered historical capability leaks are the end-to-en
 
 ## The bound
 
-The proof is about transactions with at most 9 inputs and 11 outputs. Nine inputs is the smallest that admits every operation (`swapInRedemption` pins itself to input 8); eleven outputs is the smallest that keeps the check meaningful, since `Borrowing.borrow` and `Redeemer.createRedemption` read output 9 and a leak needs a slot no covenant pins — the builder refuses a capacity without one.
+The proof is about transactions with at most 9 inputs and 11 outputs, and says nothing about larger ones. That is the whole limitation, and it is uniform: it is not that particular shapes inside the bound are missed, but that transactions outside it are simply not examined. Nine inputs is the smallest that admits every operation (`swapInRedemption` pins itself to input 8); eleven outputs is the smallest that keeps the check meaningful, since `Borrowing.borrow` and `Redeemer.createRedemption` read output 9 and a leak needs a slot no covenant pins — the builder refuses a capacity without one.
 
-Where the *bound* rather than a contract prunes a path, the build concludes that covenant cannot sit at that index, which is a hole by construction. Those sites are returned by the builder and enumerated in the test: `Loan.interact` and `StabilityPool.interact` read their function NFT two inputs on, and `StabilityPoolSidecar.attach` one input on, so a loan or pool at input 7 or 8 would need a tenth input. Every operation places the loan at input 0, 1 or 6 and the pool at 0 or 4, so no operation is lost; a loan or pool that late in a longer input list is outside the proof. A cut anywhere else fails the suite.
+Within the bound, a path pruned for reading input 9 is *faithful*: no transaction with at most 9 inputs has one, so the covenant genuinely cannot run there and `script == S ⇒ false` at that index is the right answer. The builder still returns those sites and the test enumerates them (`Loan.interact` and `StabilityPool.interact` read their function NFT two inputs on, `StabilityPoolSidecar.attach` one input on, so a loan or pool at input 7 or 8 would need a tenth input), as a regression guard: a cut appearing anywhere else means the capacity has started deciding something new, and fails the suite.
+
+Batching is covered — the solver may put several operations in one transaction, and nothing in the model discourages it — but only within 9 × 11, and nearly every pair of operations needs more inputs than that (a loan operation alone takes four or five). So practical coverage of batched transactions is thin, and widening the bound is the way to deepen it.
+
+
 
 ## Decided in a native Z3 process
 
@@ -93,7 +97,9 @@ See [docs/scope.md](docs/scope.md) for the full breakdown of what is and is not 
 
 The engine (general BCH/CashTokens, no ParyonUSD knowledge) lives in `src/`: `z3.ts`, `model.ts`, `consensus.ts`, `policy.ts`, `covenant.ts`, `script/*`, and the libauth differential oracle in `oracle/*`. The ParyonUSD instantiation is `src/covenants/` and `tests/`. See [docs/scope.md](docs/scope.md) for the per-file map.
 
-The artifact interpreter is split by soundness obligation. `script/interpreter.ts` is the stack machine and must be **faithful** — a mis-routed value or a mis-matched ELSE silently emits a constraint about the wrong UTXO, which the superset argument does not protect against. `script/capability.ts` is the abstraction that decides which comparisons carry a capability, and only needs to be **conservative**: it drops constraints and never adds them, so it can only widen the transaction set it admits. Removing the templates only ever removed constraints too, so the whole-system model is a superset of the template-era one.
+The artifact interpreter is split by soundness obligation. `script/interpreter.ts` is the stack machine and must be **faithful** — a mis-routed value or a mis-matched ELSE silently emits a constraint about the wrong UTXO, which the superset argument does not protect against. `script/capability.ts` is the abstraction that decides which comparisons carry a capability, and only needs to be **conservative**: it drops constraints and never adds them, so it can only widen the transaction set it admits.
+
+The move away from templates is not a pure widening, and should not be read as one. Removing the per-transaction pins removed constraints, but `SYSTEM_POLICY` *adds* hypotheses about the inputs that no template ever assumed — sidecar adjacency, the state identifier bytes, the function-NFT identifier↔script binding, and paryon immutable NFTs with a non-empty commitment being exactly the function NFTs. What makes that sound is not a superset argument but the induction: each added hypothesis is discharged on the outputs by its own witness in the same build, so the only thing left on trust is the genesis state.
 
 ## Checked against libauth (the differential oracle)
 

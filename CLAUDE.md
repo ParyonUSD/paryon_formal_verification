@@ -119,10 +119,15 @@ input 8) while leaving the unpinned output slot a leak needs (`Borrowing.borrow`
 builder refuses a capacity without that free slot.
 
 When a covenant reads a UTXO index the build does not carry, the path is pruned and
-`script == S ⇒ OR(paths)` collapses to `script == S ⇒ false` at that index — the build concludes that
-covenant cannot sit there. That is a hole by construction, so `cutSites` returns every one and
-`tests/whole-system.test.ts` enumerates the accepted set with the argument for each. Never widen that
-list without writing down why the shape is outside the bound anyway.
+`script == S ⇒ OR(paths)` collapses to `script == S ⇒ false` at that index. Within the bound that is
+*faithful* — no transaction with at most 9 inputs has an input 9, so the covenant really cannot run
+there — so the cut sites are a regression guard, not a defect list: `cutSites` returns every one and
+`tests/whole-system.test.ts` enumerates them. A cut appearing anywhere else means the capacity has
+begun deciding something new; understand what before updating the list.
+
+The one real limitation is the bound itself: transactions with more than 9 inputs or 11 outputs are
+not examined. Batching is covered inside the bound, but a loan operation takes four or five inputs, so
+most two-operation batches do not fit — widening the capacity is the only thing that deepens it.
 
 ## Scope boundary (what this tool does NOT check)
 
