@@ -1,12 +1,13 @@
 import { paryonArtifacts } from '@paryonusd/contracts';
 import { describe, expect, it } from 'vitest';
 import { SCRIPT } from '../src/covenants/ids.js';
-import { SYSTEM_REGISTRY, functionName } from '../src/covenants/registry.js';
+import { GUARDED_PRICE_REGISTRY, SYSTEM_REGISTRY, functionName } from '../src/covenants/registry.js';
 
 /**
  * The coverage ledger: every function of every published artifact is either **modelled** — its
- * contract is in `SYSTEM_REGISTRY` and the function is among the ABI indices that registry entry
- * models — or **excluded** in the registry with a written reason.
+ * contract is in `SYSTEM_REGISTRY`, or `GUARDED_PRICE_REGISTRY` for the price contract the price
+ * threads migrate to, and the function is among the ABI indices that registry entry models — or
+ * **excluded** in the registry with a written reason.
  *
  * It exists because `Borrowing.updatePeriodState`, a minting-NFT function with a real historical leak,
  * once went unverified while its artifact looked "covered". Registration alone is not coverage, so the
@@ -27,7 +28,8 @@ function collect(node: unknown, out: ArtifactLike[] = []): ArtifactLike[] {
 }
 
 /** Registry entries by contract name (the registry is keyed by script id). */
-const byContract = new Map([...SYSTEM_REGISTRY].map(([script, entry]) => [entry.artifact.contractName, { script, entry }]));
+const byContract = new Map([...SYSTEM_REGISTRY, ...GUARDED_PRICE_REGISTRY]
+  .map(([script, entry]) => [entry.artifact.contractName, { script, entry }]));
 
 describe('every artifact function is modelled or excluded with a reason', () => {
   const artifacts = collect(paryonArtifacts);

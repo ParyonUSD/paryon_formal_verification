@@ -135,6 +135,18 @@ export const SYSTEM_REGISTRY: CovenantRegistry = new Map<number, RegisteredCoven
 ]);
 
 /**
+ * {@link SYSTEM_REGISTRY} with every price thread migrated to `PriceContractGuarded`, which also refuses a
+ * borrow whose free outputs 7 to 9 hold any token but one of the new loan's loanKey category without
+ * capability. Same constructor as `PriceContract`, so the price entry's seeds and its `migrateContract`
+ * exclusion carry over. `tests/whole-system-guarded-price.test.ts` proves the system on it.
+ */
+export const GUARDED_PRICE_REGISTRY: CovenantRegistry = new Map(SYSTEM_REGISTRY);
+GUARDED_PRICE_REGISTRY.set(SCRIPT.PRICE, {
+  ...SYSTEM_REGISTRY.get(SCRIPT.PRICE)!,
+  artifact: paryonArtifacts.artifactPriceContractGuarded,
+});
+
+/**
  * Locking scripts that are not covenants: plain payout addresses the contracts send BCH to. They carry
  * no code, so an input on one is unconstrained — exactly like an attacker script. They are listed only
  * so `unmodelledCovenantScripts` does not mistake them for a subsystem the registry forgot.

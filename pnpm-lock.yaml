@@ -15,8 +15,8 @@ importers:
         specifier: ^0.13.2
         version: 0.13.2
       '@paryonusd/contracts':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: 1.1.0
+        version: 1.1.0
       z3-solver:
         specifier: ^4.16.0
         version: 4.16.0
@@ -290,8 +290,8 @@ packages:
   '@oxc-project/types@0.138.0':
     resolution: {integrity: sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==}
 
-  '@paryonusd/contracts@1.0.0':
-    resolution: {integrity: sha512-5zSLS8YC3/1P3z8Q2JxUdDvXbb/tGFKiymC5i25Au6dH4nlSp57Qvp1e5DG8+TwZyeDoT1yBLlymRvq9L0pW3A==}
+  '@paryonusd/contracts@1.1.0':
+    resolution: {integrity: sha512-FkA0xIwkaN8efe2/R8gg+56LmdYVe5GrUpeedsLUIPrHOqs9tARd8P+qL8LGODhxTX8Xxua5yGftaoANLc+8nQ==}
 
   '@rolldown/binding-android-arm64@1.1.4':
     resolution: {integrity: sha512-EZLpf/8y7GXkkra90ML47kzik/GMP3EMcE9bPyHmRfxLC6z9+aW5A8poCsoxjrT5GfEcNAAvWwUHjvP1pUQkfw==}
@@ -1269,7 +1269,7 @@ snapshots:
 
   '@oxc-project/types@0.138.0': {}
 
-  '@paryonusd/contracts@1.0.0': {}
+  '@paryonusd/contracts@1.1.0': {}
 
   '@rolldown/binding-android-arm64@1.1.4':
     optional: true
