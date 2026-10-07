@@ -37,8 +37,9 @@ const CAPABILITY_NAME = new Map<number, string>([
 /**
  * The shape the deployment gives a UTXO sitting on a covenant script, derived from the policy rather
  * than hand-written: the function NFTs' category, capability and identifier, and the owners' privileged
- * (category, capability) pairs. Null for the sidecars and the loanKey origin pair, which hold
- * user-facing categories the policy says nothing about.
+ * (category, capability) pairs, and, under a policy with `singleUse`, the proofs' category. Null for the
+ * sidecars and the loanKey origin pair (the proof too under a policy without `singleUse`), which hold
+ * categories the policy says nothing about.
  *
  * The liveness checks use it so that "this covenant function is alive" means it runs on the real UTXO.
  * Without it the solver can satisfy them with a parallel universe: `manage` takes its paryon category
@@ -52,6 +53,10 @@ export function realInputShape(z3: Z3, utxo: Utxo, script: number, policy: LeakP
       utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE),
       utxo.commitment.eq(commitment), utxo.commitmentLength.eq(rule.commitmentLength),
     );
+  }
+  for (const rule of policy.singleUse ?? []) {
+    if (rule.script !== script) continue;
+    return z3.And(utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE));
   }
   for (const rule of policy.ownership) {
     if (!rule.scripts.includes(script)) continue;

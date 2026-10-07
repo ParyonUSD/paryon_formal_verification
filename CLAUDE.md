@@ -66,7 +66,7 @@ The engine under `src/` is general BCH/CashTokens and imports nothing from `src/
 - `src/model.ts` — symbolic UTXO/tx model: category, capability, script, commitment (integer reading,
   length, leading byte), outpoint (transaction identity, index), presence.
 - `src/consensus.ts` — the CashTokens tally + structural and outpoint rules.
-- `src/policy.ts` — the invariant *mechanism*: the five clauses of `LeakPolicy`, the hypothesis on
+- `src/policy.ts` — the invariant *mechanism*: the six clauses of `LeakPolicy`, the hypothesis on
   inputs (`inputsRespectInvariant`), and one witness per clause.
 - `src/script/` — `script.ts` (ASM decode), `value.ts` (symbolic stack values), `interpreter.ts` (the
   stack machine), `capability.ts` (the capability abstraction), `wholeSystem.ts` (the build).

@@ -60,6 +60,34 @@ export interface LeakPolicy {
   adjacency?: AdjacencyRule[];
   /** The state NFTs' leading identifier bytes; see {@link StateShapeRule}. Optional. */
   stateShapes?: StateShapeRule[];
+  /** The single-use proof tokens; see {@link SingleUseRule}. Optional. */
+  singleUse?: SingleUseRule[];
+}
+
+/**
+ * "An immutable NFT of this category is a single-use proof: it only sits on `script`, one outpoint
+ * after a UTXO on `pairedScript`; only a transaction spending the category's minting NFT creates one,
+ * and every other transaction that spends one burns it."
+ *
+ * This is what makes a proof prove something. A covenant that accepts such a token as evidence of
+ * where its companion came from (`LoanKeyOriginEnforcer` takes the loanKey factory's immutable NFT one
+ * outpoint on as proof that the factory created it) checks the token's category and position and
+ * nothing else, so a proof that outlives its use can be parked next to any other UTXO and vouch for it.
+ * In ParyonUSD that is a loanKey category nobody's factory issued, including a copy of a live one, and
+ * a second loan sharing an existing loan's id. None of that moves a capability, so it is invisible to
+ * {@link leakWitness}. Assumed on inputs, discharged on outputs by {@link singleUseWitness}.
+ */
+export interface SingleUseRule {
+  category: number;
+  /** The script every proof of this category sits on. */
+  script: number;
+  /** The script of the UTXO one outpoint before each proof: the companion the proof vouches for. */
+  pairedScript: number;
+}
+
+/** True when a UTXO is a proof under `rule` (whatever script it sits on). */
+function isSingleUseToken(z3: Z3, utxo: Utxo, rule: SingleUseRule): Bool {
+  return z3.And(utxo.present, utxo.category.eq(rule.category), utxo.capability.eq(Capability.IMMUTABLE));
 }
 
 /**
@@ -228,7 +256,38 @@ export function inputsRespectInvariant(z3: Z3, tx: SymbolicTx, policy: LeakPolic
         ),
         other.script.eq(rule.companionScript),
       )])))),
+    // Single-use proofs: on their own script, one outpoint after their paired UTXO.
+    ...tx.inputs.flatMap((utxo) => (policy.singleUse ?? []).map((rule) =>
+      z3.Implies(isSingleUseToken(z3, utxo, rule), utxo.script.eq(rule.script)))),
+    ...tx.inputs.flatMap((utxo, i) => (policy.singleUse ?? []).flatMap((rule) =>
+      tx.inputs.flatMap((other, j) => (i === j ? [] : [z3.Implies(
+        z3.And(
+          isSingleUseToken(z3, utxo, rule), other.present,
+          other.outpointTx.eq(utxo.outpointTx), other.outpointIndex.add(1).eq(utxo.outpointIndex),
+        ),
+        other.script.eq(rule.pairedScript),
+      )])))),
   );
+}
+
+/**
+ * The single-use witness: satisfiable exactly when some output keeps a proof alive other than a fresh
+ * one the category's minting NFT creates on the proof script right after its paired UTXO. That is
+ * the preservation obligation for {@link SingleUseRule}: a proof that survives the transaction spending
+ * it, or one created anywhere else, can vouch again.
+ */
+export function singleUseWitness(z3: Z3, tx: SymbolicTx, policy: LeakPolicy): Bool {
+  return any(z3, tx.outputs.flatMap((out, j) => (policy.singleUse ?? []).map((rule) => {
+    const issuerSpent = any(z3, tx.inputs.map((input) => z3.And(
+      input.present, input.category.eq(rule.category), input.capability.eq(Capability.MINTING),
+    )));
+    const previous = tx.outputs[j - 1];
+    const pairedBefore = previous === undefined
+      ? z3.Bool.val(false)
+      : z3.And(previous.present, previous.script.eq(rule.pairedScript));
+    const freshlyIssued = z3.And(issuerSpent, out.script.eq(rule.script), pairedBefore);
+    return z3.And(isSingleUseToken(z3, out, rule), z3.Not(out.script.eq(Script.BURN)), z3.Not(freshlyIssued));
+  })));
 }
 
 /**

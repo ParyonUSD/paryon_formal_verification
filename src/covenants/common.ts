@@ -1,6 +1,7 @@
 import { Capability } from '../model.js';
 import {
-  type AdjacencyRule, type FunctionNftRule, type LeakPolicy, type OwnershipRule, type StateShapeRule,
+  type AdjacencyRule, type FunctionNftRule, type LeakPolicy, type OwnershipRule, type SingleUseRule,
+  type StateShapeRule,
 } from '../policy.js';
 import { CAT, SCRIPT } from './ids.js';
 
@@ -172,3 +173,37 @@ export const SYSTEM_POLICY: LeakPolicy = {
   adjacency: SIDECAR_PAIRS,
   stateShapes: STATE_SHAPES,
 };
+
+/**
+ * The loanKey origin proofs. `LoanKeyFactory.create` mints a fresh loanKey category onto the
+ * `LoanKeyOriginEnforcer` and, one output later, an immutable factory NFT onto `LoanKeyOriginProof`.
+ * The enforcer accepts that NFT as proof of the category's origin by category and outpoint adjacency
+ * alone, and `borrow` turns the category into the loan's id, which redemptions find the loan by. So
+ * each proof must be used once: a proof that survives its borrow vouches for any enforcer UTXO parked
+ * in front of it, including a copy of a live loanKey, and a second loan with an existing loan's id
+ * follows. Discharged on outputs by `singleUseWitness`.
+ */
+export const ORIGIN_PROOFS: SingleUseRule[] = [
+  { category: CAT.LOANKEY_FACTORY, script: SCRIPT.ORIGIN_PROOF, pairedScript: SCRIPT.ORIGIN_ENFORCER },
+];
+
+/**
+ * `SYSTEM_POLICY` with the `singleUse` clause: each loanKey origin proof is used once, then burned.
+ *
+ * It is kept apart from `SYSTEM_POLICY` because the published contracts do not preserve it: `borrow`
+ * leaves the proof free to go to any of its free outputs 7 to 9 (`tests/whole-system-origin-proof.test.ts`).
+ * An invariant the contracts do not preserve cannot be assumed by the other witnesses, so they keep
+ * proving against `SYSTEM_POLICY`, which never relies on it.
+ *
+ * The clause can only be closed through the price contract, the one covenant in every borrow whose
+ * code can change, and then only as far as the price contract's code goes: `migrateContract` is
+ * excluded from the registry, so a proof that relies on the price code holds as long as the oracle
+ * migration key does not move the price threads to code without the check.
+ *
+ * Base case: genesis mints only the factory's minting NFT, so no immutable loanKey factory NFT exists
+ * at genesis. But the published contracts break the clause from genesis on, so for a fix that arrives
+ * through the price contract the base case is the chain state when the last price thread moves: every
+ * origin proof still unspent on `LoanKeyOriginProof`, one outpoint after its enforcer. Neither is
+ * asserted by the deployment checker yet.
+ */
+export const SINGLE_USE_POLICY: LeakPolicy = { ...SYSTEM_POLICY, singleUse: ORIGIN_PROOFS };

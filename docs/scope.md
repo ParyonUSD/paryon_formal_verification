@@ -108,7 +108,7 @@ category/script id assignment are ParyonUSD-specific.
 | `src/z3.ts` | Z3 context, solver, and the native decision procedure (`checkNative` / `modelNative`) |
 | `src/model.ts` | symbolic UTXO/tx model; capability + category encoding; commitment and outpoint fields; enum-domain bounds |
 | `src/consensus.ts` | CashTokens token-validation tally + structural and outpoint rules (the trusted base) |
-| `src/policy.ts` | the invariant *mechanism*: the five clauses, the hypothesis on inputs, and a witness per clause |
+| `src/policy.ts` | the invariant *mechanism*: the six clauses, the hypothesis on inputs, and a witness per clause |
 | `src/covenant.ts` | `Covenant` interface + `compose` (small, used by an illustrative test) |
 | `src/script/artifact.ts` | the shape of a CashScript artifact this project consumes |
 | `src/script/script.ts` | opcode table + ASM decoding (from `@cashscript/utils`) and CScriptNum helpers |

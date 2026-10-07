@@ -2,7 +2,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { compose, type Covenant } from './covenant.js';
 import { addConsensusRules } from '../src/consensus.js';
 import { Capability, Script, declareTx } from '../src/model.js';
-import { forgedFunctionNftWitness, inputsRespectInvariant, leakWitness, preservationWitness } from '../src/policy.js';
+import {
+  forgedFunctionNftWitness, inputsRespectInvariant, leakWitness, preservationWitness, singleUseWitness,
+} from '../src/policy.js';
 import { getContext, newSolver, type Z3, type Z3Solver } from '../src/z3.js';
 
 const PARYON = 1;
@@ -112,5 +114,50 @@ describe('capability-leak policy', () => {
     s.add(tx.outputs[0]!.present, tx.outputs[0]!.category.eq(PARYON), tx.outputs[0]!.capability.eq(Capability.MUTABLE), tx.outputs[0]!.script.eq(Script.BURN));
     s.add(leakWitness(z3, tx, policy));
     expect(await s.check()).toBe('unsat');
+  });
+
+  it('single-use proof: kept alive or issued off its pair is caught (sat), burned or issued right after its pair is fine (unsat)', async () => {
+    const FACTORY = 4;
+    const PROOF_SCRIPT = LOAN_SCRIPT + 1;
+    const PAIRED_SCRIPT = LOAN_SCRIPT + 2;
+    const rules = { ...policy, singleUse: [{ category: FACTORY, script: PROOF_SCRIPT, pairedScript: PAIRED_SCRIPT }] };
+    const proofTx = () => {
+      const s = newSolver(z3);
+      const tx = declareTx(z3, 2, 2);
+      addConsensusRules(z3, s, tx, [FACTORY]);
+      return { s, tx };
+    };
+    const spendProof = (s: Z3Solver, tx: ReturnType<typeof declareTx>) => s.add(
+      tx.inputs[0]!.present, tx.inputs[0]!.category.eq(FACTORY), tx.inputs[0]!.capability.eq(Capability.IMMUTABLE),
+      tx.inputs[0]!.script.eq(PROOF_SCRIPT), z3.Not(tx.inputs[1]!.present),
+    );
+    const spendIssuer = (s: Z3Solver, tx: ReturnType<typeof declareTx>) => s.add(
+      tx.inputs[0]!.present, tx.inputs[0]!.category.eq(FACTORY), tx.inputs[0]!.capability.eq(Capability.MINTING),
+      z3.Not(tx.inputs[1]!.present),
+    );
+    // A spent proof kept on any live output: the passthrough a borrow must not allow.
+    let { s, tx } = proofTx();
+    spendProof(s, tx);
+    s.add(inputsRespectInvariant(z3, tx, rules), singleUseWitness(z3, tx, rules));
+    expect(await s.check()).toBe('sat');
+    // The same spend with no output left to carry it: burned.
+    ({ s, tx } = proofTx());
+    spendProof(s, tx);
+    s.add(...tx.outputs.map((out) => z3.Not(out.category.eq(FACTORY))));
+    s.add(inputsRespectInvariant(z3, tx, rules), singleUseWitness(z3, tx, rules));
+    expect(await s.check()).toBe('unsat');
+    // Issued by the minting NFT onto the proof script right after its paired UTXO: fresh, fine.
+    ({ s, tx } = proofTx());
+    spendIssuer(s, tx);
+    s.add(tx.outputs[0]!.present, tx.outputs[0]!.script.eq(PAIRED_SCRIPT), tx.outputs[0]!.category.eq(FACTORY), tx.outputs[0]!.capability.eq(Capability.MINTING));
+    s.add(tx.outputs[1]!.present, tx.outputs[1]!.script.eq(PROOF_SCRIPT), tx.outputs[1]!.category.eq(FACTORY), tx.outputs[1]!.capability.eq(Capability.IMMUTABLE));
+    s.add(singleUseWitness(z3, tx, rules));
+    expect(await s.check()).toBe('unsat');
+    // Issued with nothing paired before it: a proof that vouches for whatever is parked in front of it.
+    ({ s, tx } = proofTx());
+    spendIssuer(s, tx);
+    s.add(tx.outputs[0]!.present, tx.outputs[0]!.script.eq(PROOF_SCRIPT), tx.outputs[0]!.category.eq(FACTORY), tx.outputs[0]!.capability.eq(Capability.IMMUTABLE));
+    s.add(singleUseWitness(z3, tx, rules));
+    expect(await s.check()).toBe('sat');
   });
 });
