@@ -4,6 +4,19 @@ Bounded model checking of the ParyonUSD CashScript contracts for NFT-capability 
 
 It symbolically executes the compiled `@paryonusd/contracts` bytecode. There is no hand-transcribed contract logic anywhere in this repo, and no hand-written transaction shapes either.
 
+## Running it
+
+You need Node.js and pnpm, and a native z3 for the proofs.
+
+```bash
+pnpm install
+scripts/install-z3.sh   # the pinned z3 release into .tools/ (Linux x64); elsewhere set Z3_BIN to a z3 binary
+pnpm check              # typecheck and lint
+pnpm test               # every proof and test
+```
+
+`pnpm test` runs each test file in its own process, because the z3 wasm bindings never free their memory. The full run takes a while; `pnpm exec vitest run tests/<file>` runs one file. `ORACLE_SEED` and `ORACLE_CASES` set the seed and volume of the differential oracle, and `Z3_SMT_DIR` keeps the `.smt2` files of each proof for re-checking with any SMT solver.
+
 ## The property
 
 For every internal-authority category (paryon, pool, redeemer, loanKeyFactory), no transaction allowed by CashTokens consensus and the system's covenants can place that category's mutable or minting capability on an output other than a covenant that rightfully owns it, or a provable burn.
@@ -84,8 +97,6 @@ The proof is about transactions with at most 9 inputs and 11 outputs, and says n
 Within the bound, a path pruned for reading input 9 is *faithful*: no transaction with at most 9 inputs has one, so the covenant genuinely cannot run there and `script == S ⇒ false` at that index is the right answer. The builder still returns those sites and the test enumerates them (`Loan.interact` and `StabilityPool.interact` read their function NFT two inputs on, `StabilityPoolSidecar.attach` one input on, so a loan or pool at input 7 or 8 would need a tenth input), as a regression guard: a cut appearing anywhere else means the capacity has started deciding something new, and fails the suite.
 
 Batching is covered — the solver may put several operations in one transaction, and nothing in the model discourages it — but only within 9 × 11, and nearly every pair of operations needs more inputs than that (a loan operation alone takes four or five). So practical coverage of batched transactions is thin, and widening the bound is the way to deepen it.
-
-
 
 ## Decided in a native Z3 process
 
