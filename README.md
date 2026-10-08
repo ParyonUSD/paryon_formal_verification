@@ -6,7 +6,7 @@ It symbolically executes the compiled `@paryonusd/contracts` bytecode. There is 
 
 ## How this was built
 
-This tool was written entirely by an AI model (Anthropic's Claude), and reviewed by the ParyonUSD team with AI assistance. Its claims don't rest on that review: the model is cross-checked against libauth, every proof has a positive control, it finds two real historical leaks with no description of the attack, and each proof can be re-checked with any SMT solver. It is not an audit, and it proves one property within a bound; see [Scope](#scope) for what it does not check.
+This tool was written entirely by Claude Opus, and reviewed by the ParyonUSD team with AI assistance. Its claims don't rest on that review: the model is cross-checked against libauth, and every proof has a positive control. This formal verification is not an audit, and it proves one property within a bound; see [Scope](#scope) for what it does not check.
 
 ## Running it
 
